@@ -38,6 +38,10 @@ class _TggAppState extends State<TggApp> {
     return MaterialApp(
       title: 'TGG',
       theme: ThemeData(colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple)),
+      darkTheme: ThemeData(colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple, brightness: Brightness.dark)),
+      // Explicit for clarity -- this is already MaterialApp's default, but a
+      // dark theme without themeMode: system reads as easy to forget.
+      themeMode: ThemeMode.system,
       home: switch (widget.authRepository.status) {
         AuthStatus.unknown => const Scaffold(body: Center(child: CircularProgressIndicator())),
         AuthStatus.unauthenticated => LoginScreen(authRepository: widget.authRepository),
