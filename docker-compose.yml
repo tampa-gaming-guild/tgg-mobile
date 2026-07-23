@@ -1,0 +1,31 @@
+services:
+  flutter:
+    build:
+      context: .
+      dockerfile: docker/flutter/Dockerfile
+    container_name: tgg-mobile-flutter
+    volumes:
+      - .:/workspace
+      # Named volumes for caches/build output that shouldn't round-trip
+      # through the bind mount (perf, and avoids host/container path clashes
+      # in generated Gradle/Android files).
+      - pub_cache:/root/.pub-cache
+      - gradle_cache:/root/.gradle
+      - flutter_build:/workspace/build
+    working_dir: /workspace
+    # Keep the container alive for `docker exec` (flutter run/test/build),
+    # matching how the clubmanager repo's app container is driven.
+    command: sleep infinity
+    environment:
+      # Lets `flutter devices`/`adb` reach a phone connected via ADB-over-WiFi
+      # (`adb connect <phone-ip>:5555` from the host) without needing USB
+      # passthrough into the container -- ADB itself still runs on the host;
+      # this only needs to reach the host's adb server.
+      - ANDROID_ADB_SERVER_ADDRESS=host.docker.internal
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+volumes:
+  pub_cache:
+  gradle_cache:
+  flutter_build:
