@@ -1,21 +1,23 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
-import 'package:local_auth/local_auth.dart';
 
 import '../api/api_client.dart';
 
 enum AuthStatus { unknown, authenticated, unauthenticated }
 
 /// Owns the mobile session: the short-lived access token (in memory only)
-/// and the long-lived refresh token (device secure storage -- Keychain on
-/// iOS, Keystore-backed EncryptedSharedPreferences on Android). Biometric
-/// unlock gates *reading* the stored refresh token on relaunch; it isn't a
-/// separate server-side auth path -- see the "biometric sign-in" note in the
-/// project history for why that's sufficient (no backend changes needed).
+/// and the long-lived (30-day, server-enforced) refresh token in device
+/// secure storage (Keychain on iOS, Keystore-backed
+/// EncryptedSharedPreferences on Android). Session resumption is silent --
+/// no biometric/interactive gate -- by design: the beacon-triggered
+/// auto-check-in has to be able to obtain a valid access token with nobody
+/// present to respond to a prompt, so nothing in the token-refresh path can
+/// require user interaction. A device-lock/app-lock feature, if wanted
+/// later, would need to be a separate UI-only layer that doesn't sit in
+/// front of this.
 class AuthRepository extends ChangeNotifier {
   final ApiClient _api;
   final FlutterSecureStorage _storage;
-  final LocalAuthentication _localAuth;
 
   static const _refreshTokenKey = 'refresh_token';
 
@@ -27,24 +29,17 @@ class AuthRepository extends ChangeNotifier {
   AuthRepository({
     ApiClient? api,
     FlutterSecureStorage? storage,
-    LocalAuthentication? localAuth,
   })  : _api = api ?? ApiClient(),
-        _storage = storage ?? const FlutterSecureStorage(),
-        _localAuth = localAuth ?? LocalAuthentication();
+        _storage = storage ?? const FlutterSecureStorage();
 
   /// Call once at app startup. Resolves to authenticated/unauthenticated
-  /// after attempting to unlock and redeem any stored refresh token. A
+  /// after attempting to silently redeem any stored refresh token. A
   /// network failure leaves the stored token in place (falls back to the
   /// login screen but can self-heal next launch); only a clean rejection
   /// from the server (expired/revoked) clears it.
   Future<void> tryAutoLogin() async {
     final stored = await _storage.read(key: _refreshTokenKey);
     if (stored == null) {
-      _setStatus(AuthStatus.unauthenticated);
-      return;
-    }
-
-    if (!await _unlockWithBiometrics()) {
       _setStatus(AuthStatus.unauthenticated);
       return;
     }
@@ -124,6 +119,29 @@ class AuthRepository extends ChangeNotifier {
     return accessToken;
   }
 
+  /// Runs an authenticated API call, refreshing the access token first if
+  /// needed and retrying once if the token turned out to be expired
+  /// mid-session (statusCode 401). Centralizes this so screens (check-in,
+  /// profile, settings) don't each reimplement the same retry dance.
+  /// Returns a synthetic 401 result if there's no session to authenticate
+  /// with at all, after signing the user out.
+  Future<Map<String, dynamic>> authedCall(Future<Map<String, dynamic>> Function(String accessToken) call) async {
+    final token = await ensureAccessToken();
+    if (token == null) {
+      await logout();
+      return {'statusCode': 401, 'error': 'Your session expired. Please sign in again.'};
+    }
+
+    var result = await call(token);
+    if (result['statusCode'] == 401) {
+      final refreshed = await ensureAccessToken(forceRefresh: true);
+      if (refreshed != null) {
+        result = await call(refreshed);
+      }
+    }
+    return result;
+  }
+
   void _applyTokenResult(Map<String, dynamic> result) {
     accessToken = result['access_token'] as String;
     user = result['user'] as Map<String, dynamic>?;
@@ -132,36 +150,6 @@ class AuthRepository extends ChangeNotifier {
   void _setStatus(AuthStatus newStatus) {
     status = newStatus;
     notifyListeners();
-  }
-
-  /// True if biometrics aren't set up on this device at all (nothing to gate
-  /// with -- don't block using the stored session) or if the prompt
-  /// succeeds. False only when the device *can* prompt and the user fails or
-  /// cancels it -- that's the one case that should fall back to a full
-  /// email/password login instead of silently bypassing the gate.
-  Future<bool> _unlockWithBiometrics() async {
-    bool canUseBiometrics;
-    try {
-      canUseBiometrics = await _localAuth.isDeviceSupported() && await _localAuth.canCheckBiometrics;
-      if (canUseBiometrics) {
-        final available = await _localAuth.getAvailableBiometrics();
-        canUseBiometrics = available.isNotEmpty;
-      }
-    } catch (_) {
-      canUseBiometrics = false;
-    }
-
-    if (!canUseBiometrics) return true;
-
-    try {
-      return await _localAuth.authenticate(
-        localizedReason: 'Unlock to sign in to TGG',
-        biometricOnly: true,
-        persistAcrossBackgrounding: true,
-      );
-    } catch (_) {
-      return false;
-    }
   }
 
   Future<String> _deviceLabel() async {

@@ -1,0 +1,298 @@
+import 'package:flutter/material.dart';
+
+import '../api/api_client.dart';
+import '../auth/auth_repository.dart';
+
+class AccountSettingsScreen extends StatefulWidget {
+  final AuthRepository authRepository;
+
+  const AccountSettingsScreen({super.key, required this.authRepository});
+
+  @override
+  State<AccountSettingsScreen> createState() => _AccountSettingsScreenState();
+}
+
+class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
+  final _api = ApiClient();
+
+  bool _loading = true;
+  String? _loadError;
+  Map<String, dynamic>? _profile;
+
+  final _displayNameController = TextEditingController();
+  final _phoneController = TextEditingController();
+  bool _isOptOut = false;
+  bool _savingSettings = false;
+  String? _settingsError;
+
+  bool _togglingAutoRenew = false;
+  bool _togglingAutoApplyCredits = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  @override
+  void dispose() {
+    _displayNameController.dispose();
+    _phoneController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _loadError = null;
+    });
+
+    final result = await widget.authRepository.authedCall(_api.getProfile);
+
+    setState(() {
+      _loading = false;
+      if (result['statusCode'] == 200) {
+        _profile = result;
+        final contact = result['contact'] as Map<String, dynamic>;
+        _displayNameController.text = contact['display_name'] as String;
+        _phoneController.text = (contact['phone'] as String?) ?? '';
+        _isOptOut = contact['is_opt_out'] as bool;
+      } else {
+        _loadError = result['error'] as String? ?? 'Could not load your settings.';
+      }
+    });
+  }
+
+  void _showResult(Map<String, dynamic> result, {String successMessage = 'Saved.'}) {
+    final ok = result['success'] == true;
+    final message = ok ? (result['message'] as String? ?? successMessage) : (result['error'] as String? ?? 'Something went wrong.');
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message), backgroundColor: ok ? null : Theme.of(context).colorScheme.error),
+    );
+  }
+
+  Future<void> _saveSettings() async {
+    setState(() {
+      _savingSettings = true;
+      _settingsError = null;
+    });
+
+    final result = await widget.authRepository.authedCall((token) => _api.postProfileAction(token, 'update_settings', {
+          'display_name': _displayNameController.text.trim(),
+          'phone': _phoneController.text.trim(),
+          'is_opt_out': _isOptOut,
+        }));
+
+    setState(() {
+      _savingSettings = false;
+      if (result['success'] != true) {
+        _settingsError = result['error'] as String? ?? 'Could not save your settings.';
+      }
+    });
+    if (result['success'] == true) {
+      _showResult(result, successMessage: 'Profile settings saved.');
+      await _load();
+    }
+  }
+
+  Future<void> _toggleAutoRenew(bool enabled) async {
+    setState(() => _togglingAutoRenew = true);
+    final result = await widget.authRepository.authedCall(
+      (token) => _api.postProfileAction(token, 'toggle_auto_renew', {'enabled': enabled}),
+    );
+    setState(() => _togglingAutoRenew = false);
+    _showResult(result);
+    if (result['success'] == true) await _load();
+  }
+
+  Future<void> _toggleAutoApplyCredits(bool enabled) async {
+    setState(() => _togglingAutoApplyCredits = true);
+    final result = await widget.authRepository.authedCall(
+      (token) => _api.postProfileAction(token, 'toggle_auto_apply_credits', {'enabled': enabled}),
+    );
+    setState(() => _togglingAutoApplyCredits = false);
+    _showResult(result);
+    if (result['success'] == true) await _load();
+  }
+
+  Future<void> _sendPasswordReset() async {
+    final result = await widget.authRepository.authedCall(
+      (token) => _api.postProfileAction(token, 'trigger_password_reset'),
+    );
+    _showResult(result);
+  }
+
+  Future<void> _cancelEmailChange() async {
+    final result = await widget.authRepository.authedCall(
+      (token) => _api.postProfileAction(token, 'cancel_email_change'),
+    );
+    _showResult(result, successMessage: 'Pending email change cancelled.');
+    if (result['success'] == true) await _load();
+  }
+
+  Future<void> _showChangeEmailDialog() async {
+    final newEmailController = TextEditingController();
+    final passwordController = TextEditingController();
+
+    final requested = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Change Email Address'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: newEmailController,
+              keyboardType: TextInputType.emailAddress,
+              decoration: const InputDecoration(labelText: 'New Email Address'),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: passwordController,
+              obscureText: true,
+              decoration: const InputDecoration(labelText: 'Current Password'),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(dialogContext).pop(false), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.of(dialogContext).pop(true), child: const Text('Send Verification')),
+        ],
+      ),
+    );
+
+    if (requested != true) return;
+
+    final result = await widget.authRepository.authedCall((token) => _api.postProfileAction(token, 'request_email_change', {
+          'new_email': newEmailController.text.trim(),
+          'current_password': passwordController.text,
+        }));
+    _showResult(result);
+    if (result['success'] == true) await _load();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Account Settings')),
+      body: _buildBody(context),
+    );
+  }
+
+  Widget _buildBody(BuildContext context) {
+    if (_loading && _profile == null) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    if (_loadError != null && _profile == null) {
+      return Center(child: Text(_loadError!));
+    }
+
+    final contact = _profile!['contact'] as Map<String, dynamic>;
+    final autoRenew = _profile!['auto_renew'] as bool;
+    final canEnableAutoRenew = _profile!['can_enable_auto_renew'] as bool;
+    final autoApplyCredits = _profile!['auto_apply_credits'] as bool;
+    final pendingEmailChange = _profile!['pending_email_change'] as Map<String, dynamic>?;
+
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Profile Settings', style: Theme.of(context).textTheme.titleMedium),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _displayNameController,
+                  decoration: const InputDecoration(labelText: 'Display Name'),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _phoneController,
+                  keyboardType: TextInputType.phone,
+                  decoration: const InputDecoration(labelText: 'Phone Number', hintText: 'Leave blank to remove'),
+                ),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('Opt out of bulk emails'),
+                  value: _isOptOut,
+                  onChanged: (v) => setState(() => _isOptOut = v),
+                ),
+                if (_settingsError != null) ...[
+                  Text(_settingsError!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
+                  const SizedBox(height: 8),
+                ],
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: FilledButton(
+                    onPressed: _savingSettings ? null : _saveSettings,
+                    child: _savingSettings
+                        ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2))
+                        : const Text('Save'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 16),
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Email Address', style: Theme.of(context).textTheme.titleMedium),
+                const SizedBox(height: 8),
+                Text(contact['email'] as String),
+                if (pendingEmailChange != null) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    'Verification pending for ${pendingEmailChange['new_email']}.',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: TextButton(onPressed: _cancelEmailChange, child: const Text('Cancel Pending Change')),
+                  ),
+                ] else
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: TextButton(onPressed: _showChangeEmailDialog, child: const Text('Change Email')),
+                  ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 16),
+        Card(
+          child: SwitchListTile(
+            title: const Text('Auto-Renew Membership'),
+            subtitle: Text(canEnableAutoRenew ? 'Automatically charge your card on file at renewal.' : 'Add a card on file via the website to enable this.'),
+            value: autoRenew,
+            onChanged: (!canEnableAutoRenew || _togglingAutoRenew) ? null : _toggleAutoRenew,
+          ),
+        ),
+        const SizedBox(height: 16),
+        Card(
+          child: SwitchListTile(
+            title: const Text('Auto-Apply Membership Credits'),
+            subtitle: const Text('Automatically redeem banked credits at renewal time.'),
+            value: autoApplyCredits,
+            onChanged: _togglingAutoApplyCredits ? null : _toggleAutoApplyCredits,
+          ),
+        ),
+        const SizedBox(height: 16),
+        Card(
+          child: ListTile(
+            title: const Text('Password'),
+            subtitle: const Text('Send yourself a password reset email.'),
+            trailing: FilledButton(onPressed: _sendPasswordReset, child: const Text('Send Reset Email')),
+          ),
+        ),
+      ],
+    );
+  }
+}

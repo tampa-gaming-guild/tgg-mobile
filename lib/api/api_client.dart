@@ -101,6 +101,33 @@ class ApiClient {
     return {..._decode(response), 'statusCode': response.statusCode};
   }
 
+  /// Returns the decoded response body regardless of status code, same
+  /// contract as checkIn() -- callers retry once on a 401 (expired access
+  /// token) via statusCode rather than this throwing.
+  Future<Map<String, dynamic>> getProfile(String accessToken) async {
+    final response = await http.get(
+      Uri.parse('$baseUrl/profile.php'),
+      headers: {'Authorization': 'Bearer $accessToken'},
+    );
+    return {..._decode(response), 'statusCode': response.statusCode};
+  }
+
+  /// Dispatches a profile.php self-service action (update_settings,
+  /// toggle_auto_renew, toggle_auto_apply_credits, request_email_change,
+  /// cancel_email_change, trigger_password_reset). Same
+  /// decode-regardless-of-status contract as checkIn()/getProfile().
+  Future<Map<String, dynamic>> postProfileAction(String accessToken, String action, [Map<String, dynamic> fields = const {}]) async {
+    final response = await http.post(
+      Uri.parse('$baseUrl/profile.php'),
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer $accessToken',
+      },
+      body: jsonEncode({'action': action, ...fields}),
+    );
+    return {..._decode(response), 'statusCode': response.statusCode};
+  }
+
   Map<String, dynamic> _decode(http.Response response) {
     if (response.body.isEmpty) return {};
     return jsonDecode(response.body) as Map<String, dynamic>;

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../api/api_client.dart';
 import '../auth/auth_repository.dart';
+import 'profile_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   final AuthRepository authRepository;
@@ -26,25 +27,7 @@ class _HomeScreenState extends State<HomeScreen> {
       _checkinResultMessage = null;
     });
 
-    final accessToken = await widget.authRepository.ensureAccessToken();
-    if (accessToken == null) {
-      setState(() {
-        _checkingIn = false;
-        _checkinResultMessage = 'Your session expired. Please sign in again.';
-        _checkinResultIsError = true;
-      });
-      await widget.authRepository.logout();
-      return;
-    }
-
-    var result = await _api.checkIn(accessToken);
-    if (result['statusCode'] == 401) {
-      // Access token expired mid-session; refresh once and retry.
-      final refreshed = await widget.authRepository.ensureAccessToken(forceRefresh: true);
-      if (refreshed != null) {
-        result = await _api.checkIn(refreshed);
-      }
-    }
+    final result = await widget.authRepository.authedCall(_api.checkIn);
 
     setState(() {
       _checkingIn = false;
@@ -71,6 +54,13 @@ class _HomeScreenState extends State<HomeScreen> {
       appBar: AppBar(
         title: const Text('TGG'),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.person_outline),
+            tooltip: 'Profile',
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => ProfileScreen(authRepository: widget.authRepository)),
+            ),
+          ),
           IconButton(
             icon: const Icon(Icons.logout),
             tooltip: 'Log out',
