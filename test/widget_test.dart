@@ -1,30 +1,17 @@
-// This is a basic Flutter widget test.
-//
-// To perform an interaction with a widget in your test, use the WidgetTester
-// utility in the flutter_test package. For example, you can send tap and scroll
-// gestures. You can also use WidgetTester to find child widgets in the widget
-// tree, read text, and verify that the values of widget properties are correct.
-
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:tgg_mobile/auth/auth_repository.dart';
 import 'package:tgg_mobile/main.dart';
 
 void main() {
-  testWidgets('Counter increments smoke test', (WidgetTester tester) async {
-    // Build our app and trigger a frame.
-    await tester.pumpWidget(const MyApp());
+  testWidgets('shows a loading indicator before auth status resolves', (WidgetTester tester) async {
+    await tester.pumpWidget(TggApp(authRepository: AuthRepository()));
 
-    // Verify that our counter starts at 0.
-    expect(find.text('0'), findsOneWidget);
-    expect(find.text('1'), findsNothing);
-
-    // Tap the '+' icon and trigger a frame.
-    await tester.tap(find.byIcon(Icons.add));
-    await tester.pump();
-
-    // Verify that our counter has incremented.
-    expect(find.text('0'), findsNothing);
-    expect(find.text('1'), findsOneWidget);
+    // Single pump only (not pumpAndSettle): tryAutoLogin() is async and
+    // touches secure-storage/biometric platform channels that aren't mocked
+    // in a plain widget test, so we only assert on the synchronous first
+    // frame -- status is still AuthStatus.unknown until that resolves.
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
   });
 }

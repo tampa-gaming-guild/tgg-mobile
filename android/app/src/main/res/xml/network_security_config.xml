@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Android blocks cleartext (plain HTTP) traffic by default. The API is
+    always HTTPS in production; the only cleartext case is `localhost`, which
+    is how the dev API is reached from a physical device via `adb reverse`,
+    scoped narrowly here instead of a blanket usesCleartextTraffic="true".
+-->
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">localhost</domain>
+    </domain-config>
+</network-security-config>
