@@ -61,11 +61,6 @@ class _HomeScreenState extends State<HomeScreen> {
               MaterialPageRoute(builder: (_) => ProfileScreen(authRepository: widget.authRepository)),
             ),
           ),
-          IconButton(
-            icon: const Icon(Icons.logout),
-            tooltip: 'Log out',
-            onPressed: () => widget.authRepository.logout(),
-          ),
         ],
       ),
       body: Center(

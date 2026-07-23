@@ -292,7 +292,40 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
             trailing: FilledButton(onPressed: _sendPasswordReset, child: const Text('Send Reset Email')),
           ),
         ),
+        const SizedBox(height: 32),
+        // Deliberately separated from everything above (and off the home
+        // screen entirely) -- logging out now clears a 30-day session, so an
+        // accidental tap is costly enough to warrant its own space plus a
+        // confirmation step, not sitting next to other buttons.
+        OutlinedButton(
+          style: OutlinedButton.styleFrom(foregroundColor: Theme.of(context).colorScheme.error),
+          onPressed: _confirmLogout,
+          child: const Text('Log Out'),
+        ),
       ],
     );
+  }
+
+  Future<void> _confirmLogout() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Log Out?'),
+        content: const Text("You'll need to sign in with your email and password again next time."),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(dialogContext).pop(false), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.of(dialogContext).pop(true), child: const Text('Log Out')),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      await widget.authRepository.logout();
+      // This screen is reached two pushes deep (Home -> Profile -> here);
+      // pop back to the root so the rebuilt LoginScreen is actually visible
+      // instead of sitting underneath the still-pushed routes above it.
+      if (mounted) {
+        Navigator.of(context).popUntil((route) => route.isFirst);
+      }
+    }
   }
 }
