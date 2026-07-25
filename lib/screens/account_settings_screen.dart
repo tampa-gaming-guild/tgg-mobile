@@ -1,12 +1,16 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 import '../api/api_client.dart';
 import '../auth/auth_repository.dart';
+import '../theme/theme_controller.dart';
 
 class AccountSettingsScreen extends StatefulWidget {
   final AuthRepository authRepository;
+  final ThemeController themeController;
 
-  const AccountSettingsScreen({super.key, required this.authRepository});
+  const AccountSettingsScreen({super.key, required this.authRepository, required this.themeController});
 
   @override
   State<AccountSettingsScreen> createState() => _AccountSettingsScreenState();
@@ -14,10 +18,21 @@ class AccountSettingsScreen extends StatefulWidget {
 
 class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
   final _api = ApiClient();
+  final _storage = const FlutterSecureStorage();
+
+  static const _autoCheckinKey = 'auto_checkin_enabled';
 
   bool _loading = true;
   String? _loadError;
   Map<String, dynamic>? _profile;
+
+  // Device-local only -- there's no backend field for this (see
+  // clubmanager's api/profile.php), since it's a per-device preference, not
+  // a member-account setting. Beacon scanning itself isn't wired up yet;
+  // this just captures the on/off preference and the OS permission ahead of
+  // that, so the toggle is ready the moment scanning lands.
+  bool _autoCheckinEnabled = false;
+  bool _togglingAutoCheckin = false;
 
   final _displayNameController = TextEditingController();
   final _phoneController = TextEditingController();
@@ -32,6 +47,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
   void initState() {
     super.initState();
     _load();
+    _loadAutoCheckinPreference();
   }
 
   @override
@@ -93,6 +109,45 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
       _showResult(result, successMessage: 'Profile settings saved.');
       await _load();
     }
+  }
+
+  Future<void> _loadAutoCheckinPreference() async {
+    final stored = await _storage.read(key: _autoCheckinKey);
+    if (!mounted) return;
+    setState(() => _autoCheckinEnabled = stored == 'true');
+  }
+
+  /// Turning on requires the Bluetooth scan/connect permissions up front --
+  /// no point flipping the preference on if the OS won't let beacon
+  /// detection run once it exists. Turning off never needs a permission
+  /// check.
+  Future<void> _toggleAutoCheckin(bool enabled) async {
+    if (!enabled) {
+      await _storage.write(key: _autoCheckinKey, value: 'false');
+      setState(() => _autoCheckinEnabled = false);
+      return;
+    }
+
+    setState(() => _togglingAutoCheckin = true);
+    final statuses = await [Permission.bluetoothScan, Permission.bluetoothConnect].request();
+    if (!mounted) return;
+    setState(() => _togglingAutoCheckin = false);
+
+    final granted = statuses.values.every((s) => s.isGranted);
+    if (!granted) {
+      final permanentlyDenied = statuses.values.any((s) => s.isPermanentlyDenied);
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(permanentlyDenied
+            ? 'Bluetooth permission is blocked -- enable it for this app in system settings.'
+            : 'Bluetooth permission is required for auto check-in.'),
+        backgroundColor: Theme.of(context).colorScheme.error,
+        action: permanentlyDenied ? SnackBarAction(label: 'Open Settings', onPressed: openAppSettings) : null,
+      ));
+      return;
+    }
+
+    await _storage.write(key: _autoCheckinKey, value: 'true');
+    setState(() => _autoCheckinEnabled = true);
   }
 
   Future<void> _toggleAutoRenew(bool enabled) async {
@@ -268,6 +323,41 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
         ),
         const SizedBox(height: 16),
         Card(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Theme', style: Theme.of(context).textTheme.titleMedium),
+                const SizedBox(height: 12),
+                ListenableBuilder(
+                  listenable: widget.themeController,
+                  builder: (context, _) => SegmentedButton<ThemeMode>(
+                    segments: const [
+                      ButtonSegment(value: ThemeMode.light, label: Text('Light'), icon: Icon(Icons.light_mode_outlined)),
+                      ButtonSegment(value: ThemeMode.dark, label: Text('Dark'), icon: Icon(Icons.dark_mode_outlined)),
+                      ButtonSegment(value: ThemeMode.system, label: Text('System'), icon: Icon(Icons.settings_suggest_outlined)),
+                    ],
+                    selected: {widget.themeController.mode},
+                    onSelectionChanged: (selected) => widget.themeController.setMode(selected.first),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 16),
+        Card(
+          child: SwitchListTile(
+            title: const Text('Auto Check-In (Bluetooth Beacon)'),
+            subtitle: const Text("Automatically check yourself in when your phone detects the club's Bluetooth beacon nearby."),
+            value: _autoCheckinEnabled,
+            onChanged: _togglingAutoCheckin ? null : _toggleAutoCheckin,
+            secondary: _togglingAutoCheckin ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2)) : null,
+          ),
+        ),
+        const SizedBox(height: 16),
+        Card(
           child: SwitchListTile(
             title: const Text('Auto-Renew Membership'),
             subtitle: Text(canEnableAutoRenew ? 'Automatically charge your card on file at renewal.' : 'Add a card on file via the website to enable this.'),
@@ -320,12 +410,6 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
     );
     if (confirmed == true) {
       await widget.authRepository.logout();
-      // This screen is reached two pushes deep (Home -> Profile -> here);
-      // pop back to the root so the rebuilt LoginScreen is actually visible
-      // instead of sitting underneath the still-pushed routes above it.
-      if (mounted) {
-        Navigator.of(context).popUntil((route) => route.isFirst);
-      }
     }
   }
 }

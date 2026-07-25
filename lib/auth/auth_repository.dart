@@ -32,6 +32,13 @@ class AuthRepository extends ChangeNotifier {
   })  : _api = api ?? ApiClient(),
         _storage = storage ?? const FlutterSecureStorage();
 
+  /// 'all' is the superadmin/admin catch-all permission, same shorthand the
+  /// backend itself uses (has_permission() in config/bootstrap.php).
+  bool hasPermission(String permission) {
+    final permissions = (user?['permissions'] as List<dynamic>?)?.cast<String>() ?? const [];
+    return permissions.contains('all') || permissions.contains(permission);
+  }
+
   /// Call once at app startup. Resolves to authenticated/unauthenticated
   /// after attempting to silently redeem any stored refresh token. A
   /// network failure leaves the stored token in place (falls back to the

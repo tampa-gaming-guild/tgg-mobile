@@ -3,10 +3,11 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:tgg_mobile/auth/auth_repository.dart';
 import 'package:tgg_mobile/main.dart';
+import 'package:tgg_mobile/theme/theme_controller.dart';
 
 void main() {
   testWidgets('shows a loading indicator before auth status resolves', (WidgetTester tester) async {
-    await tester.pumpWidget(TggApp(authRepository: AuthRepository()));
+    await tester.pumpWidget(TggApp(authRepository: AuthRepository(), themeController: ThemeController()));
 
     // Single pump only (not pumpAndSettle): tryAutoLogin() is async and
     // touches secure-storage/biometric platform channels that aren't mocked

@@ -1,5 +1,15 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- For BLE beacon auto check-in (not wired up yet, see AccountSettingsScreen's
+         Auto Check-In toggle). BLUETOOTH_SCAN carries neverForLocation since we only
+         ever look for one specific known beacon, never derive a physical location from
+         scan results, matching the app's existing no-geolocation stance (see
+         checkins.php). ACCESS_FINE_LOCATION is the pre-Android-12 fallback: scanning
+         was tied to location permission before BLUETOOTH_SCAN existed, so it's still
+         needed on API 30 and below; maxSdkVersion keeps it off newer installs. -->
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" android:usesPermissionFlags="neverForLocation"/>
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT"/>
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" android:maxSdkVersion="30"/>
     <application
         android:label="tgg_mobile"
         android:name="${applicationName}"

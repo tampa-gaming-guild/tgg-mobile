@@ -112,6 +112,36 @@ class ApiClient {
     return {..._decode(response), 'statusCode': response.statusCode};
   }
 
+  /// One page of the caller's full attendance history, for the "View All"
+  /// screen behind profile.php's 3-row teaser.
+  Future<Map<String, dynamic>> attendanceHistory(String accessToken, {required int offset, int limit = 20}) async {
+    final response = await http.get(
+      Uri.parse('$baseUrl/attendance-history.php?offset=$offset&limit=$limit'),
+      headers: {'Authorization': 'Bearer $accessToken'},
+    );
+    return {..._decode(response), 'statusCode': response.statusCode};
+  }
+
+  /// One page of the caller's full billing history, same shape/contract as
+  /// attendanceHistory().
+  Future<Map<String, dynamic>> paymentHistory(String accessToken, {required int offset, int limit = 20}) async {
+    final response = await http.get(
+      Uri.parse('$baseUrl/payment-history.php?offset=$offset&limit=$limit'),
+      headers: {'Authorization': 'Bearer $accessToken'},
+    );
+    return {..._decode(response), 'statusCode': response.statusCode};
+  }
+
+  /// One page of the caller's full Membership Credit grant history, for the
+  /// "View All" screen behind profile.php's 3-row teaser.
+  Future<Map<String, dynamic>> creditsHistory(String accessToken, {required int offset, int limit = 20}) async {
+    final response = await http.get(
+      Uri.parse('$baseUrl/credits-history.php?offset=$offset&limit=$limit'),
+      headers: {'Authorization': 'Bearer $accessToken'},
+    );
+    return {..._decode(response), 'statusCode': response.statusCode};
+  }
+
   /// Dispatches a profile.php self-service action (update_settings,
   /// toggle_auto_renew, toggle_auto_apply_credits, request_email_change,
   /// cancel_email_change, trigger_password_reset). Same
@@ -124,6 +154,114 @@ class ApiClient {
         'Authorization': 'Bearer $accessToken',
       },
       body: jsonEncode({'action': action, ...fields}),
+    );
+    return {..._decode(response), 'statusCode': response.statusCode};
+  }
+
+  /// Live member search for host check-in. Returns the decoded list
+  /// regardless of status (an auth/permission failure surfaces as a JSON
+  /// error map, same shape as everything else here).
+  Future<List<dynamic>> hostSearch(String accessToken, String query) async {
+    final response = await http.get(
+      Uri.parse('$baseUrl/host/search.php?q=${Uri.encodeQueryComponent(query)}'),
+      headers: {'Authorization': 'Bearer $accessToken'},
+    );
+    if (response.statusCode != 200) return [];
+    final decoded = jsonDecode(response.body);
+    return decoded is List ? decoded : [];
+  }
+
+  /// Same decode-regardless-of-status contract as checkIn().
+  Future<Map<String, dynamic>> hostCheckIn(String accessToken, int contactId) async {
+    final response = await http.post(
+      Uri.parse('$baseUrl/host/checkin.php'),
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer $accessToken',
+      },
+      body: jsonEncode({'contact_id': contactId}),
+    );
+    return {..._decode(response), 'statusCode': response.statusCode};
+  }
+
+  /// The Hosting Dashboard payload -- active session, today's check-in
+  /// count, pending cash approvals, and the check-ins log -- or just
+  /// {is_hosting_now: false} when the caller isn't signed up to host
+  /// today's specific event (see host/dashboard.php).
+  Future<Map<String, dynamic>> hostDashboard(String accessToken) async {
+    final response = await http.get(
+      Uri.parse('$baseUrl/host/dashboard.php'),
+      headers: {'Authorization': 'Bearer $accessToken'},
+    );
+    return {..._decode(response), 'statusCode': response.statusCode};
+  }
+
+  Future<Map<String, dynamic>> resolvePendingPayment(String accessToken, int pendingId, String action) async {
+    final response = await http.post(
+      Uri.parse('$baseUrl/host/resolve-payment.php'),
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer $accessToken',
+      },
+      body: jsonEncode({'pending_id': pendingId, 'action': action}),
+    );
+    return {..._decode(response), 'statusCode': response.statusCode};
+  }
+
+  Future<Map<String, dynamic>> deleteCheckin(String accessToken, int checkinId) async {
+    final response = await http.post(
+      Uri.parse('$baseUrl/host/delete-checkin.php'),
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer $accessToken',
+      },
+      body: jsonEncode({'checkin_id': checkinId}),
+    );
+    return {..._decode(response), 'statusCode': response.statusCode};
+  }
+
+  /// Lightweight status check the bottom-nav shell calls once per
+  /// login/relaunch to decide which tabs to show (Check-In, Hosting) and
+  /// which opens by default. Unlike hostDashboard(), this works for any
+  /// authenticated member, not just an 'edit checkins' holder.
+  Future<Map<String, dynamic>> sessionStatus(String accessToken) async {
+    final response = await http.get(
+      Uri.parse('$baseUrl/session-status.php'),
+      headers: {'Authorization': 'Bearer $accessToken'},
+    );
+    return {..._decode(response), 'statusCode': response.statusCode};
+  }
+
+  /// Upcoming events and their volunteer slots (open + filled, with who --
+  /// same data volunteers.php's list view shows).
+  Future<Map<String, dynamic>> volunteerSchedule(String accessToken) async {
+    final response = await http.get(
+      Uri.parse('$baseUrl/volunteer/schedule.php'),
+      headers: {'Authorization': 'Bearer $accessToken'},
+    );
+    return {..._decode(response), 'statusCode': response.statusCode};
+  }
+
+  Future<Map<String, dynamic>> volunteerSignup(String accessToken, int slotId) async {
+    final response = await http.post(
+      Uri.parse('$baseUrl/volunteer/signup.php'),
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer $accessToken',
+      },
+      body: jsonEncode({'slot_id': slotId}),
+    );
+    return {..._decode(response), 'statusCode': response.statusCode};
+  }
+
+  Future<Map<String, dynamic>> volunteerCancel(String accessToken, int slotId) async {
+    final response = await http.post(
+      Uri.parse('$baseUrl/volunteer/cancel.php'),
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer $accessToken',
+      },
+      body: jsonEncode({'slot_id': slotId}),
     );
     return {..._decode(response), 'statusCode': response.statusCode};
   }

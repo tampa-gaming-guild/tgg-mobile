@@ -2,12 +2,17 @@ import 'package:flutter/material.dart';
 
 import '../api/api_client.dart';
 import '../auth/auth_repository.dart';
+import '../theme/theme_controller.dart';
 import 'account_settings_screen.dart';
+import 'attendance_history_screen.dart';
+import 'credits_history_screen.dart';
+import 'payment_history_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
   final AuthRepository authRepository;
+  final ThemeController themeController;
 
-  const ProfileScreen({super.key, required this.authRepository});
+  const ProfileScreen({super.key, required this.authRepository, required this.themeController});
 
   @override
   State<ProfileScreen> createState() => _ProfileScreenState();
@@ -54,7 +59,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
             tooltip: 'Account Settings',
             onPressed: () async {
               await Navigator.of(context).push(
-                MaterialPageRoute(builder: (_) => AccountSettingsScreen(authRepository: widget.authRepository)),
+                MaterialPageRoute(
+                  builder: (_) => AccountSettingsScreen(authRepository: widget.authRepository, themeController: widget.themeController),
+                ),
               );
               _load(); // settings may have changed (display name, toggles, etc.)
             },
@@ -105,6 +112,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   children: [
                     Text('${membership['membership_name']} — ${membership['status_label']}'),
                     const SizedBox(height: 4),
+                    Text('Joined ${_formatDate(membership['join_date'] as String)}'),
+                    const SizedBox(height: 4),
                     Text('Expires ${_formatDate(membership['end_date'] as String)}'),
                   ],
                 ),
@@ -112,6 +121,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
         const SizedBox(height: 16),
         _SectionCard(
           title: 'Membership Credits',
+          onViewAll: () => Navigator.of(context).push(
+            MaterialPageRoute(builder: (_) => CreditsHistoryScreen(authRepository: widget.authRepository)),
+          ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -147,6 +159,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
         const SizedBox(height: 16),
         _SectionCard(
           title: 'Recent Attendance',
+          onViewAll: () => Navigator.of(context).push(
+            MaterialPageRoute(builder: (_) => AttendanceHistoryScreen(authRepository: widget.authRepository)),
+          ),
           child: attendance.isEmpty
               ? const Text('No check-ins on file yet.')
               : Column(
@@ -170,6 +185,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
         const SizedBox(height: 16),
         _SectionCard(
           title: 'Payment History',
+          onViewAll: () => Navigator.of(context).push(
+            MaterialPageRoute(builder: (_) => PaymentHistoryScreen(authRepository: widget.authRepository)),
+          ),
           child: paymentHistory.isEmpty
               ? const Text('No billing transactions found.')
               : Column(
@@ -210,8 +228,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
 class _SectionCard extends StatelessWidget {
   final String title;
   final Widget child;
+  final VoidCallback? onViewAll;
 
-  const _SectionCard({required this.title, required this.child});
+  const _SectionCard({required this.title, required this.child, this.onViewAll});
 
   @override
   Widget build(BuildContext context) {
@@ -221,7 +240,19 @@ class _SectionCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(title, style: Theme.of(context).textTheme.titleMedium),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(title, style: Theme.of(context).textTheme.titleMedium),
+                if (onViewAll != null)
+                  TextButton.icon(
+                    onPressed: onViewAll,
+                    label: const Text('View All'),
+                    icon: const Icon(Icons.arrow_forward, size: 16),
+                    iconAlignment: IconAlignment.end,
+                  ),
+              ],
+            ),
             const SizedBox(height: 8),
             child,
           ],
