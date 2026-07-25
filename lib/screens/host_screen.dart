@@ -97,12 +97,20 @@ class _HostScreenState extends State<HostScreen> {
     });
   }
 
-  // No confirmation dialog: a host mis-tap is one delete-checkin away from
-  // undone, and search results (fewer than 15, name/email/phone match) are
-  // specific enough that an extra tap-to-confirm is just friction.
-  Future<void> _checkIn(int contactId, String displayName) async {
+  /// Opens the guest-pass confirmation dialog before actually checking
+  /// someone in, mirroring host_checkin.php's guest-confirm panel.
+  Future<void> _openCheckInConfirm(int contactId, String displayName) async {
+    final guestNames = await showDialog<List<String>>(
+      context: context,
+      builder: (_) => _GuestConfirmDialog(api: _api, authRepository: widget.authRepository, contactId: contactId, displayName: displayName),
+    );
+    if (guestNames == null) return; // dialog was cancelled
+    await _checkIn(contactId, displayName, guestNames: guestNames);
+  }
+
+  Future<void> _checkIn(int contactId, String displayName, {List<String> guestNames = const []}) async {
     setState(() => _checkingInContactId = contactId);
-    final result = await widget.authRepository.authedCall((token) => _api.hostCheckIn(token, contactId));
+    final result = await widget.authRepository.authedCall((token) => _api.hostCheckIn(token, contactId, guestNames: guestNames));
     if (!mounted) return;
     setState(() => _checkingInContactId = null);
 
@@ -280,7 +288,7 @@ class _HostScreenState extends State<HostScreen> {
                       trailing: _checkingInContactId == contactId
                           ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2))
                           : FilledButton(
-                              onPressed: () => _checkIn(contactId, displayName),
+                              onPressed: () => _openCheckInConfirm(contactId, displayName),
                               child: const Text('Check In'),
                             ),
                     );
@@ -302,9 +310,13 @@ class _HostScreenState extends State<HostScreen> {
                     final displayName = checkin['display_name'] as String;
                     final guestName = checkin['guest_name'] as String?;
                     final timeLabel = _formatTime(checkin['checked_in_at'] as String);
+                    // Guest check-ins are their own tgg_checkins row sharing
+                    // the member's contact_id, not a separate contact -- lead
+                    // with the guest's name so it doesn't read as a second
+                    // "Lori checked in" entry.
                     return ListTile(
-                      title: Text(displayName),
-                      subtitle: guestName != null ? Text('Guest: $guestName') : null,
+                      title: Text(guestName ?? displayName),
+                      subtitle: guestName != null ? Text('Guest of: $displayName') : null,
                       trailing: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
@@ -328,6 +340,115 @@ class _HostScreenState extends State<HostScreen> {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// Guest-pass confirmation dialog, mirroring host_checkin.php's
+/// guest-confirm panel: looks up the selected member's remaining guest
+/// passes for the month, then lets the host optionally add up to that many
+/// guest names before confirming the check-in. Returns the chosen guest
+/// names (possibly empty) on confirm, or null if cancelled.
+class _GuestConfirmDialog extends StatefulWidget {
+  final ApiClient api;
+  final AuthRepository authRepository;
+  final int contactId;
+  final String displayName;
+
+  const _GuestConfirmDialog({
+    required this.api,
+    required this.authRepository,
+    required this.contactId,
+    required this.displayName,
+  });
+
+  @override
+  State<_GuestConfirmDialog> createState() => _GuestConfirmDialogState();
+}
+
+class _GuestConfirmDialogState extends State<_GuestConfirmDialog> {
+  bool _loading = true;
+  int _remaining = 0;
+  bool _addingGuests = false;
+  final List<TextEditingController> _controllers = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  @override
+  void dispose() {
+    for (final controller in _controllers) {
+      controller.dispose();
+    }
+    super.dispose();
+  }
+
+  Future<void> _load() async {
+    final result = await widget.authRepository.authedCall((token) => widget.api.hostGuestPasses(token, widget.contactId));
+    if (!mounted) return;
+    setState(() {
+      _loading = false;
+      _remaining = (result['remaining'] as int?) ?? 0;
+    });
+  }
+
+  void _addField() {
+    if (_controllers.length >= _remaining) return;
+    setState(() => _controllers.add(TextEditingController()));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text('Checking in ${widget.displayName}'),
+      content: _loading
+          ? const SizedBox(height: 60, child: Center(child: CircularProgressIndicator()))
+          : Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (_remaining > 0) ...[
+                  Text(
+                    '$_remaining guest pass${_remaining == 1 ? '' : 'es'} available this month',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                  const SizedBox(height: 8),
+                  OutlinedButton.icon(
+                    icon: const Icon(Icons.person_add_alt_outlined),
+                    label: Text(_addingGuests ? 'Adding guest(s)' : 'Add guest(s)?'),
+                    onPressed: () => setState(() {
+                      _addingGuests = !_addingGuests;
+                      if (_addingGuests && _controllers.isEmpty) _addField();
+                    }),
+                  ),
+                  if (_addingGuests) ...[
+                    const SizedBox(height: 8),
+                    for (final controller in _controllers)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: TextField(controller: controller, decoration: const InputDecoration(labelText: "Guest's name")),
+                      ),
+                    if (_controllers.length < _remaining)
+                      TextButton(onPressed: _addField, child: const Text('+ Add another guest')),
+                  ],
+                ] else
+                  const Text('No guest passes remaining this month.'),
+              ],
+            ),
+      actions: [
+        TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel')),
+        FilledButton(
+          onPressed: _loading
+              ? null
+              : () => Navigator.of(context).pop(
+                    _addingGuests ? _controllers.map((c) => c.text.trim()).where((n) => n.isNotEmpty).toList() : const <String>[],
+                  ),
+          child: const Text('Confirm Check-In'),
+        ),
+      ],
     );
   }
 }

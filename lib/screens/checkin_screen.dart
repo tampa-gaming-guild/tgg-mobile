@@ -5,7 +5,10 @@ import '../auth/auth_repository.dart';
 
 /// Self check-in tab, split out of what used to be on the member home
 /// screen -- its own bottom-nav tab now, shown only while a check-in window
-/// is open (see MainShell).
+/// is open (see MainShell). Mirrors checkin.php's "bring a guest?" toggle:
+/// hidden entirely when the member's plan has no guest-pass allowance,
+/// otherwise lets them add up to their remaining monthly passes before
+/// checking in.
 class CheckInScreen extends StatefulWidget {
   final AuthRepository authRepository;
 
@@ -21,19 +24,59 @@ class _CheckInScreenState extends State<CheckInScreen> {
   String? _resultMessage;
   bool _resultIsError = false;
 
+  int _guestPassesRemaining = 0;
+  bool _bringingGuest = false;
+  final List<TextEditingController> _guestControllers = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadGuestPasses();
+  }
+
+  @override
+  void dispose() {
+    for (final controller in _guestControllers) {
+      controller.dispose();
+    }
+    super.dispose();
+  }
+
+  Future<void> _loadGuestPasses() async {
+    final result = await widget.authRepository.authedCall(_api.guestPasses);
+    if (!mounted) return;
+    setState(() => _guestPassesRemaining = (result['remaining'] as int?) ?? 0);
+  }
+
+  void _addGuestField() {
+    if (_guestControllers.length >= _guestPassesRemaining) return;
+    setState(() => _guestControllers.add(TextEditingController()));
+  }
+
   Future<void> _checkIn() async {
+    final guestNames = _bringingGuest
+        ? _guestControllers.map((c) => c.text.trim()).where((name) => name.isNotEmpty).toList()
+        : const <String>[];
+
     setState(() {
       _checkingIn = true;
       _resultMessage = null;
     });
 
-    final result = await widget.authRepository.authedCall(_api.checkIn);
+    final result = await widget.authRepository.authedCall((token) => _api.checkIn(token, guestNames: guestNames));
 
+    if (!mounted) return;
     setState(() {
       _checkingIn = false;
       if (result['success'] == true) {
         _resultIsError = false;
         _resultMessage = result['message'] as String? ?? 'Checked in!';
+        _bringingGuest = false;
+        for (final controller in _guestControllers) {
+          controller.dispose();
+        }
+        _guestControllers.clear();
+        _loadGuestPasses(); // this month's remaining count just changed
       } else if (result['redirect_reason'] != null) {
         _resultIsError = true;
         _resultMessage = result['redirect_reason'] == 'entrance_fee'
@@ -53,7 +96,7 @@ class _CheckInScreenState extends State<CheckInScreen> {
       body: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 400),
-          child: Padding(
+          child: SingleChildScrollView(
             padding: const EdgeInsets.all(24),
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -66,7 +109,37 @@ class _CheckInScreenState extends State<CheckInScreen> {
                   textAlign: TextAlign.center,
                   style: Theme.of(context).textTheme.titleMedium,
                 ),
-                const SizedBox(height: 32),
+                if (_guestPassesRemaining > 0) ...[
+                  const SizedBox(height: 24),
+                  OutlinedButton.icon(
+                    icon: const Icon(Icons.person_add_alt_outlined),
+                    label: Text(_bringingGuest ? 'Bringing a guest' : 'Bring a guest?'),
+                    onPressed: () => setState(() {
+                      _bringingGuest = !_bringingGuest;
+                      if (_bringingGuest && _guestControllers.isEmpty) _addGuestField();
+                    }),
+                  ),
+                  Text(
+                    '$_guestPassesRemaining guest pass${_guestPassesRemaining == 1 ? '' : 'es'} available this month',
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                  if (_bringingGuest) ...[
+                    const SizedBox(height: 12),
+                    for (final controller in _guestControllers) ...[
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: TextField(
+                          controller: controller,
+                          decoration: const InputDecoration(labelText: "Guest's name"),
+                        ),
+                      ),
+                    ],
+                    if (_guestControllers.length < _guestPassesRemaining)
+                      TextButton(onPressed: _addGuestField, child: const Text('+ Add another guest')),
+                  ],
+                ],
+                const SizedBox(height: 24),
                 FilledButton(
                   onPressed: _checkingIn ? null : _checkIn,
                   child: _checkingIn

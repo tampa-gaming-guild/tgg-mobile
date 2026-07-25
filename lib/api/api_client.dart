@@ -89,14 +89,25 @@ class ApiClient {
   /// endpoint's success/error/redirect_reason fields are the real result,
   /// not an HTTP-level exception. statusCode is included for the one case
   /// the caller needs it: retrying once on a 401 (expired access token).
-  Future<Map<String, dynamic>> checkIn(String accessToken) async {
+  Future<Map<String, dynamic>> checkIn(String accessToken, {List<String> guestNames = const []}) async {
     final response = await http.post(
       Uri.parse('$baseUrl/checkins.php'),
       headers: {
         'Content-Type': 'application/json',
         'Authorization': 'Bearer $accessToken',
       },
-      body: jsonEncode(const {}),
+      body: jsonEncode({'guest_names': guestNames}),
+    );
+    return {..._decode(response), 'statusCode': response.statusCode};
+  }
+
+  /// The caller's own guest-pass allowance/remaining for the current
+  /// calendar month, used to decide whether to show a "bring a guest?"
+  /// toggle before checking in.
+  Future<Map<String, dynamic>> guestPasses(String accessToken) async {
+    final response = await http.get(
+      Uri.parse('$baseUrl/guest-passes.php'),
+      headers: {'Authorization': 'Bearer $accessToken'},
     );
     return {..._decode(response), 'statusCode': response.statusCode};
   }
@@ -172,14 +183,24 @@ class ApiClient {
   }
 
   /// Same decode-regardless-of-status contract as checkIn().
-  Future<Map<String, dynamic>> hostCheckIn(String accessToken, int contactId) async {
+  Future<Map<String, dynamic>> hostCheckIn(String accessToken, int contactId, {List<String> guestNames = const []}) async {
     final response = await http.post(
       Uri.parse('$baseUrl/host/checkin.php'),
       headers: {
         'Content-Type': 'application/json',
         'Authorization': 'Bearer $accessToken',
       },
-      body: jsonEncode({'contact_id': contactId}),
+      body: jsonEncode({'contact_id': contactId, 'guest_names': guestNames}),
+    );
+    return {..._decode(response), 'statusCode': response.statusCode};
+  }
+
+  /// A specific member's guest-pass allowance/remaining, shown in the host's
+  /// check-in confirmation panel before deciding whether to add guest names.
+  Future<Map<String, dynamic>> hostGuestPasses(String accessToken, int contactId) async {
+    final response = await http.get(
+      Uri.parse('$baseUrl/host/guest-passes.php?contact_id=$contactId'),
+      headers: {'Authorization': 'Bearer $accessToken'},
     );
     return {..._decode(response), 'statusCode': response.statusCode};
   }
