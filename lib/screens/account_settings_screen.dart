@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 import '../api/api_client.dart';
 import '../auth/auth_repository.dart';
+import '../beacon/auto_checkin_preference.dart';
 import '../notifications/notification_service.dart';
 import '../theme/theme_controller.dart';
 
@@ -19,9 +19,6 @@ class AccountSettingsScreen extends StatefulWidget {
 
 class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
   final _api = ApiClient();
-  final _storage = const FlutterSecureStorage();
-
-  static const _autoCheckinKey = 'auto_checkin_enabled';
 
   bool _loading = true;
   String? _loadError;
@@ -29,9 +26,8 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
 
   // Device-local only -- there's no backend field for this (see
   // clubmanager's api/profile.php), since it's a per-device preference, not
-  // a member-account setting. Beacon scanning itself isn't wired up yet;
-  // this just captures the on/off preference and the OS permission ahead of
-  // that, so the toggle is ready the moment scanning lands.
+  // a member-account setting. The actual scan loop lives in MainShell, which
+  // reads this same AutoCheckinPreference flag.
   bool _autoCheckinEnabled = false;
   bool _togglingAutoCheckin = false;
 
@@ -119,9 +115,9 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
   }
 
   Future<void> _loadAutoCheckinPreference() async {
-    final stored = await _storage.read(key: _autoCheckinKey);
+    final enabled = await AutoCheckinPreference.isEnabled();
     if (!mounted) return;
-    setState(() => _autoCheckinEnabled = stored == 'true');
+    setState(() => _autoCheckinEnabled = enabled);
   }
 
   /// Turning on requires the Bluetooth scan/connect permissions up front --
@@ -130,13 +126,18 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
   /// check.
   Future<void> _toggleAutoCheckin(bool enabled) async {
     if (!enabled) {
-      await _storage.write(key: _autoCheckinKey, value: 'false');
+      await AutoCheckinPreference.setEnabled(false);
       setState(() => _autoCheckinEnabled = false);
       return;
     }
 
     setState(() => _togglingAutoCheckin = true);
-    final statuses = await [Permission.bluetoothScan, Permission.bluetoothConnect].request();
+    // Location is requested alongside Bluetooth, and it has to be the Precise
+    // (ACCESS_FINE_LOCATION) grant specifically -- see the AndroidManifest
+    // comment. Approximate is not merely degraded here: verified on-device,
+    // a coarse-only grant returns no BLE scan results whatsoever, so there'd
+    // be no point enabling the preference without it.
+    final statuses = await [Permission.bluetoothScan, Permission.bluetoothConnect, Permission.location].request();
     if (!mounted) return;
     setState(() => _togglingAutoCheckin = false);
 
@@ -145,15 +146,15 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
       final permanentlyDenied = statuses.values.any((s) => s.isPermanentlyDenied);
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
         content: Text(permanentlyDenied
-            ? 'Bluetooth permission is blocked -- enable it for this app in system settings.'
-            : 'Bluetooth permission is required for auto check-in.'),
+            ? 'Bluetooth and Precise Location are blocked -- enable them for this app in system settings.'
+            : 'Auto check-in needs Bluetooth and Precise Location. If Location is already allowed, set it to Precise rather than Approximate.'),
         backgroundColor: Theme.of(context).colorScheme.error,
         action: permanentlyDenied ? SnackBarAction(label: 'Open Settings', onPressed: openAppSettings) : null,
       ));
       return;
     }
 
-    await _storage.write(key: _autoCheckinKey, value: 'true');
+    await AutoCheckinPreference.setEnabled(true);
     setState(() => _autoCheckinEnabled = true);
   }
 
@@ -391,7 +392,12 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
         Card(
           child: SwitchListTile(
             title: const Text('Auto Check-In (Bluetooth Beacon)'),
-            subtitle: const Text("Automatically check yourself in when your phone detects the club's Bluetooth beacon nearby."),
+            // Says "while the app is open" on purpose: scanning is
+            // foreground-only for now (MainShell stops it on pause), so
+            // promising unqualified walk-in detection would be a promise the
+            // app doesn't yet keep. Reword once background detection lands.
+            subtitle: const Text(
+                "While the app is open, check yourself in automatically when your phone detects the club's Bluetooth beacon nearby."),
             value: _autoCheckinEnabled,
             onChanged: _togglingAutoCheckin ? null : _toggleAutoCheckin,
             secondary: _togglingAutoCheckin ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2)) : null,

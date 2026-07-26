@@ -1,15 +1,35 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET"/>
-    <!-- For BLE beacon auto check-in (not wired up yet, see AccountSettingsScreen's
-         Auto Check-In toggle). BLUETOOTH_SCAN carries neverForLocation since we only
-         ever look for one specific known beacon, never derive a physical location from
-         scan results, matching the app's existing no-geolocation stance (see
-         checkins.php). ACCESS_FINE_LOCATION is the pre-Android-12 fallback: scanning
-         was tied to location permission before BLUETOOTH_SCAN existed, so it's still
-         needed on API 30 and below; maxSdkVersion keeps it off newer installs. -->
-    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" android:usesPermissionFlags="neverForLocation"/>
+    <!-- For BLE beacon auto check-in (see AccountSettingsScreen's Auto Check-In
+         toggle).
+
+         BLUETOOTH_SCAN deliberately does NOT carry usesPermissionFlags="neverForLocation",
+         even though that flag reads as exactly right for us: we only ever match one known
+         beacon UUID and never derive a physical location. The catch is that Android keeps
+         a "location denylist" of advertising data patterns, and iBeacon and Eddystone
+         payloads are on it by design, since beacons are the canonical way to derive
+         location from BLE. Any app that disavows location via that flag gets those
+         advertisements silently stripped from its scan results. On device this looked like
+         every other BLE device arriving normally while the club beacon alone never showed
+         up, with one "BtScan.ScanController: Location deny list ... Skip" logged per
+         advertisement. Setting the flag would filter out the only advertisement the
+         feature exists to see.
+
+         Scanning therefore counts as location capable, which is why ACCESS_FINE_LOCATION
+         is requested for real (no maxSdkVersion cap) and prompted at runtime alongside the
+         Bluetooth permissions. It must be the Precise grant: verified on device by revoking
+         it and leaving only ACCESS_COARSE_LOCATION, which returned no BLE scan results at
+         all, not even non beacon devices. Approximate is not a degraded mode here, it is a
+         non working one, so the permission prompts say Precise explicitly. Note also that
+         only FINE is declared here; the platform adds COARSE implicitly, and permission
+         handler requests just what the manifest declares, so Permission.location correctly
+         reports denied on an Approximate only grant rather than silently failing later.
+
+         BeaconScanner still never reads device location; it only parses manufacturer data
+         bytes out of the advertisements it receives. -->
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN"/>
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT"/>
-    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" android:maxSdkVersion="30"/>
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
     <!-- For the Hosting tab's "new pending cash payment" local notification
          (NotificationService). Required on Android 13+ for the runtime
          permission request to have anything to grant. -->

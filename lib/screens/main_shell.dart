@@ -4,9 +4,13 @@ import 'package:flutter/material.dart';
 
 import '../api/api_client.dart';
 import '../auth/auth_repository.dart';
+import '../beacon/auto_checkin_controller.dart';
+import '../beacon/auto_checkin_preference.dart';
+import '../notifications/notification_service.dart';
 import '../theme/theme_controller.dart';
 import 'checkin_screen.dart';
 import 'host_screen.dart';
+import 'payment_flow_screen.dart';
 import 'profile_screen.dart';
 import 'volunteer_screen.dart';
 
@@ -52,11 +56,18 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
   bool _canHost = false;
   int _selectedIndex = 0;
   Timer? _statusPollTimer;
+  late final AutoCheckinController _autoCheckin;
+  bool _foreground = true;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _autoCheckin = AutoCheckinController(
+      authRepository: widget.authRepository,
+      onResult: _onAutoCheckinResult,
+      onNeedsPayment: _onAutoCheckinNeedsPayment,
+    );
     _loadStatus();
     _statusPollTimer = Timer.periodic(_statusPollInterval, (_) => _refreshStatus());
   }
@@ -65,12 +76,22 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _statusPollTimer?.cancel();
+    _autoCheckin.stop();
     super.dispose();
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) _refreshStatus();
+    if (state == AppLifecycleState.resumed) {
+      _foreground = true;
+      _refreshStatus();
+    } else if (state == AppLifecycleState.paused) {
+      _foreground = false;
+      // Foreground-only scanning for now -- release the radio the moment
+      // we're backgrounded rather than let Android's background-scan
+      // restrictions do it for us less predictably.
+      _autoCheckin.stop();
+    }
   }
 
   Future<void> _loadStatus() async {
@@ -79,15 +100,17 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
 
     final canHost = result['can_host'] == true;
     final isHostingNow = result['is_hosting_now'] == true;
+    final windowOpen = result['is_checkin_window_open'] == true;
     setState(() {
       _checking = false;
-      _checkinWindowOpen = result['is_checkin_window_open'] == true;
+      _checkinWindowOpen = windowOpen;
       _canHost = canHost;
       // Hosting always lands right after Home (index 1) whenever it's
       // present -- select it by index so this stays in sync without
       // duplicating that position number here.
       _selectedIndex = isHostingNow ? 1 : 0;
     });
+    await _syncAutoCheckin();
   }
 
   /// The periodic re-check -- see the class doc comment. Only ever updates
@@ -99,6 +122,60 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
       _checkinWindowOpen = result['is_checkin_window_open'] == true;
       _canHost = result['can_host'] == true;
     });
+    await _syncAutoCheckin();
+  }
+
+  /// Auto check-in only ever runs while a checkin window is open and the
+  /// device-local preference (Account Settings) is on -- app-foreground
+  /// gating is handled separately via didChangeAppLifecycleState.
+  Future<void> _syncAutoCheckin() async {
+    final enabled = _checkinWindowOpen && await AutoCheckinPreference.isEnabled();
+    if (!mounted) return;
+    await _autoCheckin.sync(enabled);
+  }
+
+  /// Auto check-in currently only ever fires with the app on screen (scanning
+  /// stops on pause), so a system notification is the wrong channel for it:
+  /// it needs POST_NOTIFICATIONS, which the member has no reason to have
+  /// granted, and it buries the result in the shade while they're looking
+  /// right at the app. In-app first, then; the notification stays as the
+  /// fallback for a result that lands while the app is off screen, which is
+  /// the normal case once background detection exists.
+  void _notifyAutoCheckin({required String title, required String body, bool isError = false}) {
+    if (_foreground && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(body),
+        backgroundColor: isError ? Theme.of(context).colorScheme.error : null,
+        duration: const Duration(seconds: 6),
+      ));
+    } else {
+      NotificationService.show(title: title, body: body);
+    }
+  }
+
+  void _onAutoCheckinResult(String message, {required bool isError}) {
+    _notifyAutoCheckin(title: isError ? 'Auto Check-In' : 'Checked In!', body: message, isError: isError);
+  }
+
+  /// Detected at the door but something needs paying first. On screen we can
+  /// do better than telling them where to go -- take them straight into the
+  /// same native payment flow the Check-In tab's button uses.
+  void _onAutoCheckinNeedsPayment(String reason) {
+    if (!_foreground || !mounted) {
+      NotificationService.show(
+        title: 'Payment Needed to Check In',
+        body: 'The club beacon was detected, but a payment is needed before you can check in. Open the app to finish.',
+      );
+      return;
+    }
+
+    Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => PaymentFlowScreen(
+        authRepository: widget.authRepository,
+        displayName: widget.authRepository.user?['display_name'] as String? ?? 'you',
+        initialReason: reason,
+      ),
+    ));
   }
 
   List<_ShellTab> _destinations(bool checkinWindowOpen, bool canHost, int selectedIndex) => [
