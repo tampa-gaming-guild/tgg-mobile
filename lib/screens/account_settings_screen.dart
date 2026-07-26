@@ -4,6 +4,7 @@ import 'package:permission_handler/permission_handler.dart';
 
 import '../api/api_client.dart';
 import '../auth/auth_repository.dart';
+import '../notifications/notification_service.dart';
 import '../theme/theme_controller.dart';
 
 class AccountSettingsScreen extends StatefulWidget {
@@ -34,6 +35,11 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
   bool _autoCheckinEnabled = false;
   bool _togglingAutoCheckin = false;
 
+  // Host-only (see the SwitchListTile's hasPermission gate below). Also
+  // device-local -- see _autoCheckinEnabled's note above, same reasoning.
+  bool _pendingPaymentAlertsEnabled = false;
+  bool _togglingPendingPaymentAlerts = false;
+
   final _displayNameController = TextEditingController();
   final _phoneController = TextEditingController();
   bool _isOptOut = false;
@@ -48,6 +54,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
     super.initState();
     _load();
     _loadAutoCheckinPreference();
+    _loadPendingPaymentAlertsPreference();
   }
 
   @override
@@ -148,6 +155,40 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
 
     await _storage.write(key: _autoCheckinKey, value: 'true');
     setState(() => _autoCheckinEnabled = true);
+  }
+
+  Future<void> _loadPendingPaymentAlertsPreference() async {
+    final enabled = await NotificationService.isPendingPaymentAlertsEnabled();
+    if (!mounted) return;
+    setState(() => _pendingPaymentAlertsEnabled = enabled);
+  }
+
+  /// Same shape as _toggleAutoCheckin: turning on requests the OS
+  /// notification permission first and refuses to enable if it's denied;
+  /// turning off never needs a permission check.
+  Future<void> _togglePendingPaymentAlerts(bool enabled) async {
+    if (!enabled) {
+      await NotificationService.setPendingPaymentAlertsEnabled(false);
+      setState(() => _pendingPaymentAlertsEnabled = false);
+      return;
+    }
+
+    setState(() => _togglingPendingPaymentAlerts = true);
+    final granted = await NotificationService.requestPermission();
+    if (!mounted) return;
+    setState(() => _togglingPendingPaymentAlerts = false);
+
+    if (!granted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: const Text('Notification permission is required for pending-payment alerts -- enable it for this app in system settings.'),
+        backgroundColor: Theme.of(context).colorScheme.error,
+        action: SnackBarAction(label: 'Open Settings', onPressed: openAppSettings),
+      ));
+      return;
+    }
+
+    await NotificationService.setPendingPaymentAlertsEnabled(true);
+    setState(() => _pendingPaymentAlertsEnabled = true);
   }
 
   Future<void> _toggleAutoRenew(bool enabled) async {
@@ -356,6 +397,18 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
             secondary: _togglingAutoCheckin ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2)) : null,
           ),
         ),
+        if (widget.authRepository.hasPermission('edit checkins')) ...[
+          const SizedBox(height: 16),
+          Card(
+            child: SwitchListTile(
+              title: const Text('Pending Payment Alerts'),
+              subtitle: const Text('Buzz and notify me when a new cash payment needs approval while I\'m on the Hosting tab.'),
+              value: _pendingPaymentAlertsEnabled,
+              onChanged: _togglingPendingPaymentAlerts ? null : _togglePendingPaymentAlerts,
+              secondary: _togglingPendingPaymentAlerts ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2)) : null,
+            ),
+          ),
+        ],
         const SizedBox(height: 16),
         Card(
           child: SwitchListTile(

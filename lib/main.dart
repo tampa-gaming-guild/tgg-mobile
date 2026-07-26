@@ -1,11 +1,14 @@
 import 'package:flutter/material.dart';
 
 import 'auth/auth_repository.dart';
+import 'notifications/notification_service.dart';
 import 'screens/login_screen.dart';
 import 'screens/main_shell.dart';
 import 'theme/theme_controller.dart';
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await NotificationService.init();
   runApp(TggApp(authRepository: AuthRepository(), themeController: ThemeController()));
 }
 

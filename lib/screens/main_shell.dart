@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../api/api_client.dart';
@@ -18,10 +20,19 @@ import 'volunteer_screen.dart';
 /// (2nd position) whenever it's present, but is only *auto-selected* by
 /// default when the caller is actually signed up as today's host/volunteer
 /// (is_hosting_now); an admin who merely holds the permission still sees the
-/// tab but isn't dropped into it uninvited. Fetched once per login/relaunch,
-/// not live-polled: if a session starts while the app is already open,
-/// relaunch (or the old manual routes, now gone) is what used to pick that
-/// up, and still is.
+/// tab but isn't dropped into it uninvited.
+///
+/// Tab visibility is re-checked every 5 minutes (a session's hosting window
+/// opens 2 hours before its start_time -- see Event::getActiveSession() --
+/// so 5-minute granularity is plenty to catch that transition), so the
+/// Hosting/Check-In tabs can appear without a relaunch if a window opens
+/// while the app is already running -- that's also what lets HostScreen's
+/// own faster 20-second pending-payment poll start. Also re-checked whenever
+/// the app resumes from the background: Android often suspends the whole
+/// Dart isolate while backgrounded, so the 5-minute timer can't be trusted
+/// to "catch up" on its own the moment the app is reopened. Both refreshes
+/// deliberately never touch the selected tab -- they shouldn't yank the user
+/// off whatever tab they're actually using.
 class MainShell extends StatefulWidget {
   final AuthRepository authRepository;
   final ThemeController themeController;
@@ -32,17 +43,34 @@ class MainShell extends StatefulWidget {
   State<MainShell> createState() => _MainShellState();
 }
 
-class _MainShellState extends State<MainShell> {
+class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
+  static const _statusPollInterval = Duration(minutes: 5);
+
   final _api = ApiClient();
   bool _checking = true;
   bool _checkinWindowOpen = false;
   bool _canHost = false;
   int _selectedIndex = 0;
+  Timer? _statusPollTimer;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _loadStatus();
+    _statusPollTimer = Timer.periodic(_statusPollInterval, (_) => _refreshStatus());
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _statusPollTimer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) _refreshStatus();
   }
 
   Future<void> _loadStatus() async {
@@ -62,7 +90,18 @@ class _MainShellState extends State<MainShell> {
     });
   }
 
-  List<_ShellTab> _destinations(bool checkinWindowOpen, bool canHost) => [
+  /// The periodic re-check -- see the class doc comment. Only ever updates
+  /// which tabs are shown, never _selectedIndex.
+  Future<void> _refreshStatus() async {
+    final result = await widget.authRepository.authedCall(_api.sessionStatus);
+    if (!mounted) return;
+    setState(() {
+      _checkinWindowOpen = result['is_checkin_window_open'] == true;
+      _canHost = result['can_host'] == true;
+    });
+  }
+
+  List<_ShellTab> _destinations(bool checkinWindowOpen, bool canHost, int selectedIndex) => [
         _ShellTab(
           icon: Icons.home_outlined,
           selectedIcon: Icons.home,
@@ -74,7 +113,8 @@ class _MainShellState extends State<MainShell> {
             icon: Icons.badge_outlined,
             selectedIcon: Icons.badge,
             label: 'Hosting',
-            builder: (auth) => HostScreen(authRepository: auth),
+            // Hosting always lands at index 1 when present -- see _loadStatus.
+            builder: (auth) => HostScreen(authRepository: auth, isActive: selectedIndex == 1),
           ),
         if (checkinWindowOpen)
           _ShellTab(
@@ -97,13 +137,17 @@ class _MainShellState extends State<MainShell> {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
 
-    final tabs = _destinations(_checkinWindowOpen, _canHost);
+    final tabs = _destinations(_checkinWindowOpen, _canHost, _selectedIndex);
     final selectedIndex = _selectedIndex.clamp(0, tabs.length - 1);
 
     return Scaffold(
       body: IndexedStack(
         index: selectedIndex,
-        children: tabs.map((tab) => tab.builder(widget.authRepository)).toList(),
+        // Keyed by label -- now that tabs can appear/disappear mid-session
+        // (see _refreshStatus), a plain position-based diff would treat an
+        // inserted/removed tab as replacing every tab after it, wiping their
+        // state (scroll position, loaded data) for no reason.
+        children: tabs.map((tab) => KeyedSubtree(key: ValueKey(tab.label), child: tab.builder(widget.authRepository))).toList(),
       ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: selectedIndex,

@@ -10,6 +10,10 @@
     <uses-permission android:name="android.permission.BLUETOOTH_SCAN" android:usesPermissionFlags="neverForLocation"/>
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT"/>
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" android:maxSdkVersion="30"/>
+    <!-- For the Hosting tab's "new pending cash payment" local notification
+         (NotificationService). Required on Android 13+ for the runtime
+         permission request to have anything to grant. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <application
         android:label="tgg_mobile"
         android:name="${applicationName}"

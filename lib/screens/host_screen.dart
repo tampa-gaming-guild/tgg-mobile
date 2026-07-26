@@ -1,28 +1,47 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../api/api_client.dart';
 import '../auth/auth_repository.dart';
+import '../notifications/notification_service.dart';
 
 /// The Hosting tab, mirroring index.php's Hosting View: session banner,
 /// today's check-in count, pending cash approvals, quick member search +
 /// check-in, and the check-ins log. Only shown in the bottom nav while a
 /// session is active and the caller holds 'edit checkins' (see MainShell),
 /// and it's the default tab in that case.
+///
+/// [isActive] tells this widget whether its tab is the one currently on
+/// screen -- MainShell keeps every tab alive in an IndexedStack, so
+/// switching tabs doesn't dispose/recreate this widget. The pending-payment
+/// poll itself always runs regardless (a host needs the alert no matter
+/// which tab they're looking at); isActive only decides whether to refresh
+/// immediately on becoming visible, and whether the in-app SnackBar is shown
+/// (a SnackBar on a tab that isn't painted right now wouldn't be seen
+/// anyway -- the haptic buzz and system notification aren't affected by that
+/// and always fire).
 class HostScreen extends StatefulWidget {
   final AuthRepository authRepository;
+  final bool isActive;
 
-  const HostScreen({super.key, required this.authRepository});
+  const HostScreen({super.key, required this.authRepository, required this.isActive});
 
   @override
   State<HostScreen> createState() => _HostScreenState();
 }
 
 class _HostScreenState extends State<HostScreen> {
+  // Cheap enough at this volume (one host or two, at most, polling a single
+  // GET) to catch a new pending cash payment reasonably quickly without
+  // needing push notifications.
+  static const _pollInterval = Duration(seconds: 20);
+
   final _api = ApiClient();
   final _searchController = TextEditingController();
   Timer? _debounce;
+  Timer? _pollTimer;
 
   bool _searching = false;
   List<dynamic> _searchResults = const [];
@@ -38,39 +57,103 @@ class _HostScreenState extends State<HostScreen> {
   final Set<int> _resolvingPaymentIds = {};
   int? _deletingCheckinId;
 
+  // Tracks which pending-payment ids we've already seen, so a poll can tell
+  // "a new one just showed up" apart from "the same ones are still here" --
+  // null until the first successful load, so that initial load never fires
+  // a false "new payment" alert for payments that were already pending.
+  Set<int>? _knownPendingPaymentIds;
+
   @override
   void initState() {
     super.initState();
     _loadDashboard();
+    // Runs for as long as this widget exists (i.e. for the whole logged-in
+    // session while Hosting is available), not just while its tab is
+    // visible -- see the isActive doc comment above.
+    _pollTimer = Timer.periodic(_pollInterval, (_) => _loadDashboard(silent: true));
+  }
+
+  @override
+  void didUpdateWidget(covariant HostScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.isActive && !oldWidget.isActive) {
+      _loadDashboard(silent: true); // catch up on anything missed while this tab wasn't visible
+    }
   }
 
   @override
   void dispose() {
+    _pollTimer?.cancel();
     _debounce?.cancel();
     _searchController.dispose();
     super.dispose();
   }
 
-  Future<void> _loadDashboard() async {
-    setState(() {
-      _loadingDashboard = true;
-      _dashboardError = null;
-    });
+  /// [silent] skips the loading spinner -- used by the poll timer and the
+  /// just-became-active refresh, so a background/periodic check doesn't
+  /// flash the dashboard content every time.
+  Future<void> _loadDashboard({bool silent = false}) async {
+    if (!silent) {
+      setState(() {
+        _loadingDashboard = true;
+        _dashboardError = null;
+      });
+    }
 
     final result = await widget.authRepository.authedCall(_api.hostDashboard);
+    if (!mounted) return;
 
     setState(() {
       _loadingDashboard = false;
       if (result['statusCode'] != 200) {
-        _dashboardError = result['error'] as String? ?? 'Could not load the hosting dashboard.';
+        if (!silent) _dashboardError = result['error'] as String? ?? 'Could not load the hosting dashboard.';
         return;
       }
+      _dashboardError = null;
       _isHostingNow = result['is_hosting_now'] == true;
       _activeSession = result['active_session'] as Map<String, dynamic>?;
       _checkinsToday = (result['checkins_today'] as int?) ?? 0;
       _pendingPayments = (result['pending_payments'] as List<dynamic>?) ?? const [];
       _checkinsLog = (result['checkins_log'] as List<dynamic>?) ?? const [];
     });
+
+    _notifyIfNewPendingPayments();
+  }
+
+  /// Notifies (system notification + haptic, and a snackbar if this tab is
+  /// actually the visible one) for any pending payment id that wasn't in the
+  /// previous load -- the closest thing to a push notification we get
+  /// without standing up FCM/APNs, and it fires no matter which tab the app
+  /// is on since the poll now runs continuously (see initState). Gated on
+  /// the Account Settings "Pending Payment Alerts" toggle -- if it's off,
+  /// this stays completely silent.
+  Future<void> _notifyIfNewPendingPayments() async {
+    final currentIds = _pendingPayments.map((p) => (p as Map<String, dynamic>)['id'] as int).toSet();
+    final previousIds = _knownPendingPaymentIds;
+    _knownPendingPaymentIds = currentIds;
+    if (previousIds == null) return; // first load this session -- nothing to compare against yet
+
+    final newIds = currentIds.difference(previousIds);
+    if (newIds.isEmpty) return;
+
+    if (!await NotificationService.isPendingPaymentAlertsEnabled()) return;
+    if (!mounted) return;
+
+    final newNames = _pendingPayments
+        .where((p) => newIds.contains((p as Map<String, dynamic>)['id']))
+        .map((p) => (p as Map<String, dynamic>)['display_name'] as String)
+        .join(', ');
+
+    HapticFeedback.vibrate();
+    NotificationService.show(
+      title: 'Cash Payment Pending Approval',
+      body: newIds.length == 1 ? '$newNames needs approval.' : '$newNames need approval.',
+    );
+    if (!widget.isActive) return; // not the visible tab -- a snackbar here wouldn't be seen anyway
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text('New cash payment pending approval: $newNames'),
+      duration: const Duration(seconds: 6),
+    ));
   }
 
   void _onSearchChanged(String query) {
