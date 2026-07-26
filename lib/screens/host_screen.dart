@@ -6,6 +6,8 @@ import 'package:flutter/services.dart';
 import '../api/api_client.dart';
 import '../auth/auth_repository.dart';
 import '../notifications/notification_service.dart';
+import 'member_profile_screen.dart';
+import 'payment_flow_screen.dart';
 
 /// The Hosting tab, mirroring index.php's Hosting View: session banner,
 /// today's check-in count, pending cash approvals, quick member search +
@@ -197,25 +199,53 @@ class _HostScreenState extends State<HostScreen> {
     if (!mounted) return;
     setState(() => _checkingInContactId = null);
 
-    final ok = result['success'] == true;
-    String message;
-    if (ok) {
-      // Not result['message'] -- that's worded for self-check-in ("Welcome,
-      // X!"), which reads backwards on the host's own screen.
-      message = '$displayName checked in successfully.';
-    } else if (result['redirect_reason'] != null) {
-      message = result['redirect_reason'] == 'entrance_fee'
-          ? '$displayName owes an entrance fee -- collect payment before checking in.'
-          : "$displayName's membership needs to be renewed before checking in.";
-    } else {
-      message = result['error'] as String? ?? 'Check-in failed.';
+    if (result['redirect_reason'] != null) {
+      await _openPaymentFlow(contactId, displayName, result['redirect_reason'] as String);
+      return;
     }
 
+    final ok = result['success'] == true;
+    // Not result['message'] on success -- that's worded for self-check-in
+    // ("Welcome, X!"), which reads backwards on the host's own screen.
+    final message = ok ? '$displayName checked in successfully.' : (result['error'] as String? ?? 'Check-in failed.');
     _showSnack(message, isError: !ok);
 
     if (ok) {
       _searchController.clear();
       setState(() => _searchResults = const []);
+      await _loadDashboard();
+    }
+  }
+
+  /// Opens the native Card/Cash (+ tier picker) screen -- mirrors
+  /// host_checkin.php's redirect into pay-entrance.php, but the webview
+  /// only ever shows for Stripe's own hosted Checkout page inside it, not
+  /// this picker itself. A successful card payment there also completes
+  /// the check-in itself (the backend inserts the tgg_checkins row); cash
+  /// instead lands on the pending-approvals list already shown on this
+  /// dashboard.
+  Future<void> _openPaymentFlow(int contactId, String displayName, String reason) async {
+    final outcome = await Navigator.of(context).push<String>(
+      MaterialPageRoute(
+        builder: (_) => PaymentFlowScreen(
+          authRepository: widget.authRepository,
+          displayName: displayName,
+          initialReason: reason,
+          contactId: contactId,
+        ),
+      ),
+    );
+    if (!mounted) return;
+
+    if (outcome == 'success') {
+      _searchController.clear();
+      setState(() => _searchResults = const []);
+      _showSnack('$displayName checked in successfully.');
+      await _loadDashboard();
+    } else if (outcome == 'cash_pending') {
+      _searchController.clear();
+      setState(() => _searchResults = const []);
+      _showSnack('$displayName has a pending cash payment -- approve it below to complete their check-in.');
       await _loadDashboard();
     }
   }
@@ -370,9 +400,23 @@ class _HostScreenState extends State<HostScreen> {
                       ].join(' · ')),
                       trailing: _checkingInContactId == contactId
                           ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2))
-                          : FilledButton(
-                              onPressed: () => _openCheckInConfirm(contactId, displayName),
-                              child: const Text('Check In'),
+                          : Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                IconButton(
+                                  icon: const Icon(Icons.person_outline),
+                                  tooltip: 'View Profile',
+                                  onPressed: () => Navigator.of(context).push(
+                                    MaterialPageRoute(
+                                      builder: (_) => MemberProfileScreen(authRepository: widget.authRepository, contactId: contactId),
+                                    ),
+                                  ),
+                                ),
+                                FilledButton(
+                                  onPressed: () => _openCheckInConfirm(contactId, displayName),
+                                  child: const Text('Check In'),
+                                ),
+                              ],
                             ),
                     );
                   }).toList(),

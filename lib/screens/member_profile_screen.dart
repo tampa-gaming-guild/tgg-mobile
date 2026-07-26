@@ -2,24 +2,24 @@ import 'package:flutter/material.dart';
 
 import '../api/api_client.dart';
 import '../auth/auth_repository.dart';
-import '../theme/theme_controller.dart';
-import 'account_settings_screen.dart';
-import 'attendance_history_screen.dart';
-import 'credits_history_screen.dart';
-import 'payment_history_screen.dart';
-import 'renew_screen.dart';
+import 'renew_membership_screen.dart';
 
-class ProfileScreen extends StatefulWidget {
+/// Read-only view of another member's profile for a host, mirroring
+/// profile.php's contact/membership/credits/attendance/payment sections --
+/// reached from the Hosting tab's member search. No pagination (unlike the
+/// member's own Home profile); a "Renew" button leads to the offline
+/// renewal form.
+class MemberProfileScreen extends StatefulWidget {
   final AuthRepository authRepository;
-  final ThemeController themeController;
+  final int contactId;
 
-  const ProfileScreen({super.key, required this.authRepository, required this.themeController});
+  const MemberProfileScreen({super.key, required this.authRepository, required this.contactId});
 
   @override
-  State<ProfileScreen> createState() => _ProfileScreenState();
+  State<MemberProfileScreen> createState() => _MemberProfileScreenState();
 }
 
-class _ProfileScreenState extends State<ProfileScreen> {
+class _MemberProfileScreenState extends State<MemberProfileScreen> {
   final _api = ApiClient();
   bool _loading = true;
   String? _errorMessage;
@@ -37,42 +37,25 @@ class _ProfileScreenState extends State<ProfileScreen> {
       _errorMessage = null;
     });
 
-    final result = await widget.authRepository.authedCall(_api.getProfile);
+    final result = await widget.authRepository.authedCall((token) => _api.hostMemberProfile(token, widget.contactId));
 
+    if (!mounted) return;
     setState(() {
       _loading = false;
       if (result['statusCode'] == 200) {
         _profile = result;
       } else {
-        _errorMessage = result['error'] as String? ?? 'Could not load your profile.';
+        _errorMessage = result['error'] as String? ?? 'Could not load this member.';
       }
     });
   }
 
   @override
   Widget build(BuildContext context) {
+    final displayName = (_profile?['contact'] as Map<String, dynamic>?)?['display_name'] as String?;
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Profile'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.settings_outlined),
-            tooltip: 'Account Settings',
-            onPressed: () async {
-              await Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder: (_) => AccountSettingsScreen(authRepository: widget.authRepository, themeController: widget.themeController),
-                ),
-              );
-              _load(); // settings may have changed (display name, toggles, etc.)
-            },
-          ),
-        ],
-      ),
-      body: RefreshIndicator(
-        onRefresh: _load,
-        child: _buildBody(context),
-      ),
+      appBar: AppBar(title: Text(displayName ?? 'Member Profile')),
+      body: RefreshIndicator(onRefresh: _load, child: _buildBody(context)),
     );
   }
 
@@ -103,6 +86,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       children: [
         Text(contact['display_name'] as String, style: Theme.of(context).textTheme.headlineSmall),
         Text(contact['email'] as String, style: Theme.of(context).textTheme.bodySmall),
+        if (contact['phone'] != null) Text(contact['phone'] as String, style: Theme.of(context).textTheme.bodySmall),
         const SizedBox(height: 24),
         Card(
           child: Padding(
@@ -117,7 +101,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     FilledButton(
                       onPressed: () async {
                         final renewed = await Navigator.of(context).push<bool>(
-                          MaterialPageRoute(builder: (_) => RenewScreen(authRepository: widget.authRepository, membership: membership)),
+                          MaterialPageRoute(
+                            builder: (_) => RenewMembershipScreen(
+                              authRepository: widget.authRepository,
+                              contactId: widget.contactId,
+                              displayName: contact['display_name'] as String,
+                              membership: membership,
+                              hasCardOnFile: _profile!['has_card_on_file'] == true,
+                            ),
+                          ),
                         );
                         if (renewed == true) _load();
                       },
@@ -142,21 +134,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
         const SizedBox(height: 16),
         _SectionCard(
           title: 'Membership Credits',
-          onViewAll: () => Navigator.of(context).push(
-            MaterialPageRoute(builder: (_) => CreditsHistoryScreen(authRepository: widget.authRepository)),
-          ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text('${credits['available']} available'),
               Text('${credits['earned']} earned, ${credits['applied']} applied, ${credits['expired']} expired'),
-              if (credits['next_expiration_date'] != null) ...[
-                const SizedBox(height: 4),
-                Text(
-                  '${credits['next_expiration_credits']} expiring ${_formatDate(credits['next_expiration_date'] as String)}',
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-              ],
               if (creditGrants.isNotEmpty) ...[
                 const Divider(height: 20),
                 ...creditGrants.map((grant) {
@@ -180,9 +162,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
         const SizedBox(height: 16),
         _SectionCard(
           title: 'Recent Attendance',
-          onViewAll: () => Navigator.of(context).push(
-            MaterialPageRoute(builder: (_) => AttendanceHistoryScreen(authRepository: widget.authRepository)),
-          ),
           child: attendance.isEmpty
               ? const Text('No check-ins on file yet.')
               : Column(
@@ -195,7 +174,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       child: Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          Text(_formatDateTime(row['checked_in_at'] as String)),
+                          Text(_formatDate(row['checked_in_at'] as String)),
                           Flexible(child: Text(label, textAlign: TextAlign.end)),
                         ],
                       ),
@@ -206,9 +185,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
         const SizedBox(height: 16),
         _SectionCard(
           title: 'Payment History',
-          onViewAll: () => Navigator.of(context).push(
-            MaterialPageRoute(builder: (_) => PaymentHistoryScreen(authRepository: widget.authRepository)),
-          ),
           child: paymentHistory.isEmpty
               ? const Text('No billing transactions found.')
               : Column(
@@ -239,19 +215,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
     ];
     return '${months[date.month - 1]} ${date.day}, ${date.year}';
   }
-
-  String _formatDateTime(String isoDateTime) {
-    final date = DateTime.parse(isoDateTime);
-    return '${_formatDate(isoDateTime)} ${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
-  }
 }
 
 class _SectionCard extends StatelessWidget {
   final String title;
   final Widget child;
-  final VoidCallback? onViewAll;
 
-  const _SectionCard({required this.title, required this.child, this.onViewAll});
+  const _SectionCard({required this.title, required this.child});
 
   @override
   Widget build(BuildContext context) {
@@ -261,19 +231,7 @@ class _SectionCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(title, style: Theme.of(context).textTheme.titleMedium),
-                if (onViewAll != null)
-                  TextButton.icon(
-                    onPressed: onViewAll,
-                    label: const Text('View All'),
-                    icon: const Icon(Icons.arrow_forward, size: 16),
-                    iconAlignment: IconAlignment.end,
-                  ),
-              ],
-            ),
+            Text(title, style: Theme.of(context).textTheme.titleMedium),
             const SizedBox(height: 8),
             child,
           ],

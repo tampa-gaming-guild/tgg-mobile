@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../api/api_client.dart';
 import '../auth/auth_repository.dart';
+import 'payment_flow_screen.dart';
 
 /// Self check-in tab, split out of what used to be on the member home
 /// screen -- its own bottom-nav tab now, shown only while a check-in window
@@ -78,13 +79,42 @@ class _CheckInScreenState extends State<CheckInScreen> {
         _guestControllers.clear();
         _loadGuestPasses(); // this month's remaining count just changed
       } else if (result['redirect_reason'] != null) {
-        _resultIsError = true;
-        _resultMessage = result['redirect_reason'] == 'entrance_fee'
-            ? 'An entrance fee is due before you can check in -- please see the host.'
-            : 'Your membership needs to be renewed before you can check in.';
+        _resultIsError = false;
+        _resultMessage = null;
+        _openPaymentFlow(result['redirect_reason'] as String);
       } else {
         _resultIsError = true;
         _resultMessage = result['error'] as String? ?? 'Check-in failed.';
+      }
+    });
+  }
+
+  /// Opens the native Card/Cash (+ tier picker) screen -- mirrors
+  /// pay-entrance.php's flow, but the webview only ever shows for Stripe's
+  /// own hosted Checkout page inside it, not this picker itself. A
+  /// successful card payment there also completes the check-in itself
+  /// (the backend inserts the tgg_checkins row), so there's nothing further
+  /// to call here on success.
+  Future<void> _openPaymentFlow(String reason) async {
+    final displayName = widget.authRepository.user?['display_name'] as String? ?? 'you';
+    final outcome = await Navigator.of(context).push<String>(
+      MaterialPageRoute(
+        builder: (_) => PaymentFlowScreen(
+          authRepository: widget.authRepository,
+          displayName: displayName,
+          initialReason: reason,
+        ),
+      ),
+    );
+    if (!mounted) return;
+
+    setState(() {
+      if (outcome == 'success') {
+        _resultIsError = false;
+        _resultMessage = "Payment complete -- you're checked in!";
+      } else if (outcome == 'cash_pending') {
+        _resultIsError = false;
+        _resultMessage = 'See the Host to pay in cash. Your check-in will be completed once they confirm payment.';
       }
     });
   }
