@@ -78,6 +78,8 @@ class BeaconBackground {
     // the next background transition, which for a new day is what we want.
     await stop();
 
+    if (!await NotificationService.isCheckinAlertsEnabled()) return;
+
     await NotificationService.init();
     if (result['success'] == true) {
       await NotificationService.show(

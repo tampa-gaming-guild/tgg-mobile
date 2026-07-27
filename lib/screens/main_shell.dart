@@ -161,15 +161,20 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
   /// right at the app. In-app first, then; the notification stays as the
   /// fallback for a result that lands while the app is off screen, which is
   /// the normal case once background detection exists.
-  void _notifyAutoCheckin({required String title, required String body, bool isError = false}) {
+  Future<void> _notifyAutoCheckin({required String title, required String body, bool isError = false}) async {
     if (_foreground && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
         content: Text(body),
         backgroundColor: isError ? Theme.of(context).colorScheme.error : null,
         duration: const Duration(seconds: 6),
       ));
-    } else {
-      NotificationService.show(title: title, body: body);
+      return;
+    }
+    // The on-screen path is the app talking to someone who is looking at it;
+    // only the notification is subject to the Auto Check-In Notifications
+    // switch.
+    if (await NotificationService.isCheckinAlertsEnabled()) {
+      await NotificationService.show(title: title, body: body);
     }
   }
 
@@ -180,9 +185,9 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
   /// Detected at the door but something needs paying first. On screen we can
   /// do better than telling them where to go -- take them straight into the
   /// same native payment flow the Check-In tab's button uses.
-  void _onAutoCheckinNeedsPayment(String reason) {
+  Future<void> _onAutoCheckinNeedsPayment(String reason) async {
     if (!_foreground || !mounted) {
-      NotificationService.show(
+      await _notifyAutoCheckin(
         title: 'Payment Needed to Check In',
         body: 'The club beacon was detected, but a payment is needed before you can check in. Open the app to finish.',
       );

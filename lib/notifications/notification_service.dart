@@ -14,6 +14,7 @@ import 'package:permission_handler/permission_handler.dart';
 class NotificationService {
   static const _storage = FlutterSecureStorage();
   static const _pendingPaymentAlertsKey = 'pending_payment_alerts_enabled';
+  static const _checkinAlertsKey = 'checkin_alerts_enabled';
 
   static final _plugin = FlutterLocalNotificationsPlugin();
   static bool _initialized = false;
@@ -38,6 +39,19 @@ class NotificationService {
 
   static Future<void> setPendingPaymentAlertsEnabled(bool enabled) async {
     await _storage.write(key: _pendingPaymentAlertsKey, value: enabled ? 'true' : 'false');
+  }
+
+  /// Whether to announce a beacon-triggered check-in. Read by both the
+  /// foreground path (MainShell) and the background isolate
+  /// (BeaconBackground), which is the one that actually depends on it: with
+  /// the app closed a notification is the only way the member learns they
+  /// were checked in.
+  static Future<bool> isCheckinAlertsEnabled() async {
+    return (await _storage.read(key: _checkinAlertsKey)) == 'true';
+  }
+
+  static Future<void> setCheckinAlertsEnabled(bool enabled) async {
+    await _storage.write(key: _checkinAlertsKey, value: enabled ? 'true' : 'false');
   }
 
   /// Requests the OS notification permission (Android 13+; iOS's alert/badge/

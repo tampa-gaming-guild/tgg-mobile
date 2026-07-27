@@ -31,6 +31,8 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
   // reads this same AutoCheckinPreference flag.
   bool _autoCheckinEnabled = false;
   bool _togglingAutoCheckin = false;
+  bool _checkinAlertsEnabled = false;
+  bool _togglingCheckinAlerts = false;
 
   // Host-only (see the SwitchListTile's hasPermission gate below). Also
   // device-local -- see _autoCheckinEnabled's note above, same reasoning.
@@ -117,8 +119,40 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
 
   Future<void> _loadAutoCheckinPreference() async {
     final enabled = await AutoCheckinPreference.isEnabled();
+    final alerts = await NotificationService.isCheckinAlertsEnabled();
     if (!mounted) return;
-    setState(() => _autoCheckinEnabled = enabled);
+    setState(() {
+      _autoCheckinEnabled = enabled;
+      _checkinAlertsEnabled = alerts;
+    });
+  }
+
+  /// Same shape as the other notification toggle: turning on has to clear the
+  /// OS permission first and refuses if that's declined, so the switch never
+  /// sits in an on position that silently does nothing.
+  Future<void> _toggleCheckinAlerts(bool enabled) async {
+    if (!enabled) {
+      await NotificationService.setCheckinAlertsEnabled(false);
+      setState(() => _checkinAlertsEnabled = false);
+      return;
+    }
+
+    setState(() => _togglingCheckinAlerts = true);
+    final granted = await NotificationService.requestPermission();
+    if (!mounted) return;
+    setState(() => _togglingCheckinAlerts = false);
+
+    if (!granted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: const Text('Notification permission is blocked -- enable it for this app in system settings.'),
+        backgroundColor: Theme.of(context).colorScheme.error,
+        action: SnackBarAction(label: 'Open Settings', onPressed: openAppSettings),
+      ));
+      return;
+    }
+
+    await NotificationService.setCheckinAlertsEnabled(true);
+    setState(() => _checkinAlertsEnabled = true);
   }
 
   /// Turning on requires the Bluetooth scan/connect permissions up front --
@@ -164,15 +198,19 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
     // Asked for separately, and never allowed to block enabling: a check-in
     // that happens while the app is closed can only announce itself as a
     // notification, but it still happens without one. Declining costs the
-    // confirmation, not the feature.
-    if (!await NotificationService.requestPermission()) {
-      if (!mounted) return;
+    // confirmation, not the feature, and the Auto Check-In Notifications switch
+    // that now appears is the way back to it.
+    final notificationsGranted = await NotificationService.requestPermission();
+    await NotificationService.setCheckinAlertsEnabled(notificationsGranted);
+    if (!mounted) return;
+    setState(() => _checkinAlertsEnabled = notificationsGranted);
+
+    if (!notificationsGranted) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
         content: Text("Auto check-in is on. Without notification permission you won't be told when it checks you in while the app is closed."),
         duration: Duration(seconds: 6),
       ));
     }
-
   }
 
   Future<void> _loadPendingPaymentAlertsPreference() async {
@@ -409,17 +447,31 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
         Card(
           child: SwitchListTile(
             title: const Text('Auto Check-In (Bluetooth Beacon)'),
-            // Says "while the app is open" on purpose: scanning is
-            // foreground-only for now (MainShell stops it on pause), so
-            // promising unqualified walk-in detection would be a promise the
-            // app doesn't yet keep. Reword once background detection lands.
             subtitle: const Text(
-                "While the app is open, check yourself in automatically when your phone detects the club's Bluetooth beacon nearby."),
+                "Check yourself in automatically when you arrive and your phone detects the club's Bluetooth beacon. Works with the app closed."),
             value: _autoCheckinEnabled,
             onChanged: _togglingAutoCheckin ? null : _toggleAutoCheckin,
             secondary: _togglingAutoCheckin ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2)) : null,
           ),
         ),
+        // Only shown once auto check-in is on, since on its own it controls
+        // nothing. Its real job is being a second chance: notification
+        // permission is requested when auto check-in is switched on, and if
+        // that was declined there'd otherwise be no way back to it from
+        // inside the app.
+        if (_autoCheckinEnabled) ...[
+          const SizedBox(height: 8),
+          Card(
+            child: SwitchListTile(
+              title: const Text('Auto Check-In Notifications'),
+              subtitle: const Text(
+                  'Tell me when auto check-in checks me in, or when it needs a payment first. With the app closed this is the only way to know either happened.'),
+              value: _checkinAlertsEnabled,
+              onChanged: _togglingCheckinAlerts ? null : _toggleCheckinAlerts,
+              secondary: _togglingCheckinAlerts ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2)) : null,
+            ),
+          ),
+        ],
         if (widget.authRepository.hasPermission('edit checkins')) ...[
           const SizedBox(height: 16),
           Card(
