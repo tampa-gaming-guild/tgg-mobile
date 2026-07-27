@@ -6,6 +6,7 @@ import '../api/api_client.dart';
 import '../auth/auth_repository.dart';
 import '../beacon/auto_checkin_controller.dart';
 import '../beacon/auto_checkin_preference.dart';
+import '../beacon/beacon_background.dart';
 import '../notifications/notification_service.dart';
 import '../theme/theme_controller.dart';
 import 'checkin_screen.dart';
@@ -80,18 +81,37 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
     super.dispose();
   }
 
+  /// The two scanners hand off rather than overlap: in the foreground we hold
+  /// the radio ourselves (fast, and we can answer on screen), and while
+  /// backgrounded we hand a filter to the OS and let it wake us (see
+  /// BeaconBackground). Running both would just spend a wakeup arriving at
+  /// the same day-stamped result.
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       _foreground = true;
+      BeaconBackground.stop();
       _refreshStatus();
     } else if (state == AppLifecycleState.paused) {
       _foreground = false;
-      // Foreground-only scanning for now -- release the radio the moment
-      // we're backgrounded rather than let Android's background-scan
-      // restrictions do it for us less predictably.
       _autoCheckin.stop();
+      _armBackgroundScan();
     }
+  }
+
+  /// Armed regardless of whether a check-in window is currently open: the
+  /// window may well open while the app is backgrounded, and by then the
+  /// status poll is suspended and can't arm anything. checkins.php refuses
+  /// politely outside a session, and the background path stays silent on a
+  /// refusal, so the cost of being early is one filtered wakeup.
+  ///
+  /// Armed without regard to background location: whether the OS actually
+  /// delivers to a registered scan without that grant is being measured, and
+  /// gating on it here would presuppose the answer. Registering costs nothing
+  /// if nothing is ever delivered.
+  Future<void> _armBackgroundScan() async {
+    if (!await AutoCheckinPreference.isEnabled()) return;
+    await BeaconBackground.start();
   }
 
   Future<void> _loadStatus() async {

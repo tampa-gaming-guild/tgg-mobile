@@ -30,6 +30,21 @@
     <uses-permission android:name="android.permission.BLUETOOTH_SCAN"/>
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT"/>
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
+    <!-- Deliberately NOT requesting ACCESS_BACKGROUND_LOCATION. Walk in
+         detection works without it: the scan registered with the OS
+         (BeaconScanControl) is delivered to BeaconScanReceiver even with the
+         app force killed and that permission revoked, verified on device by
+         swiping the app away and then powering the beacon on, which cold
+         started the process to deliver the broadcast. The registered scan
+         belongs to the system rather than to us, which appears to be why it
+         escapes the background location gate that a self held scan would hit.
+
+         An earlier round of testing seemed to show the opposite, but that was
+         measuring a scan configured with CALLBACK_TYPE_FIRST_MATCH, which
+         this hardware never reports on at all; the permission was never the
+         variable. Worth re testing before anyone adds it back, since it costs
+         members an "Allow all the time" prompt and a Play Store review. -->
+
     <!-- For the Hosting tab's "new pending cash payment" local notification
          (NotificationService). Required on Android 13+ for the runtime
          permission request to have anything to grant. -->
@@ -61,6 +76,16 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
+        <!-- Target of the PendingIntent handed to BluetoothLeScanner for
+             background beacon detection (BeaconScanControl). The system
+             delivers scan results here even when the app has no running
+             process, starting one if needed, which is what allows walk in
+             check in without a foreground service. Not exported: the only
+             legitimate sender is the platform's own Bluetooth stack. -->
+        <receiver
+            android:name=".BeaconScanReceiver"
+            android:enabled="true"
+            android:exported="false" />
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data

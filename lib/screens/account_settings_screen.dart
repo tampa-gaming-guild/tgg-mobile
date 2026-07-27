@@ -4,6 +4,7 @@ import 'package:permission_handler/permission_handler.dart';
 import '../api/api_client.dart';
 import '../auth/auth_repository.dart';
 import '../beacon/auto_checkin_preference.dart';
+import '../beacon/beacon_background.dart';
 import '../notifications/notification_service.dart';
 import '../theme/theme_controller.dart';
 
@@ -127,6 +128,9 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
   Future<void> _toggleAutoCheckin(bool enabled) async {
     if (!enabled) {
       await AutoCheckinPreference.setEnabled(false);
+      // Also cancel any scan already registered with the OS, which would
+      // otherwise outlive the preference and keep waking the phone.
+      await BeaconBackground.stop();
       setState(() => _autoCheckinEnabled = false);
       return;
     }
@@ -156,6 +160,19 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
 
     await AutoCheckinPreference.setEnabled(true);
     setState(() => _autoCheckinEnabled = true);
+
+    // Asked for separately, and never allowed to block enabling: a check-in
+    // that happens while the app is closed can only announce itself as a
+    // notification, but it still happens without one. Declining costs the
+    // confirmation, not the feature.
+    if (!await NotificationService.requestPermission()) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text("Auto check-in is on. Without notification permission you won't be told when it checks you in while the app is closed."),
+        duration: Duration(seconds: 6),
+      ));
+    }
+
   }
 
   Future<void> _loadPendingPaymentAlertsPreference() async {
