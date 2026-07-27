@@ -17,13 +17,22 @@
 
          Scanning therefore counts as location capable, which is why ACCESS_FINE_LOCATION
          is requested for real (no maxSdkVersion cap) and prompted at runtime alongside the
-         Bluetooth permissions. It must be the Precise grant: verified on device by revoking
-         it and leaving only ACCESS_COARSE_LOCATION, which returned no BLE scan results at
-         all, not even non beacon devices. Approximate is not a degraded mode here, it is a
-         non working one, so the permission prompts say Precise explicitly. Note also that
-         only FINE is declared here; the platform adds COARSE implicitly, and permission
-         handler requests just what the manifest declares, so Permission.location correctly
-         reports denied on an Approximate only grant rather than silently failing later.
+         Bluetooth permissions, and why the prompts say Precise explicitly.
+
+         Whether the platform would in fact deliver scan results on an Approximate only
+         grant has never actually been measured, and an earlier note here claiming it had
+         been was wrong. The app refuses to scan without Precise, so the one test run
+         measured that refusal rather than anything Android did. Since BLE scanning has
+         wanted ACCESS_FINE_LOCATION since Android 10 the requirement is very likely real,
+         but treat it as assumed. Worth measuring if the size of the permission ask ever
+         becomes a problem, by relaxing the gate in AccountSettingsScreen and
+         AutoCheckinController and watching whether advertisements still arrive.
+
+         Verified separately, and this part was measured: only FINE is declared here, the
+         platform adds COARSE implicitly, and permission handler requests just what the
+         manifest declares, so Permission.location reports denied on an Approximate only
+         grant. The toggle refuses to switch on rather than enabling and silently never
+         detecting anything.
 
          BeaconScanner still never reads device location; it only parses manufacturer data
          bytes out of the advertisements it receives. -->

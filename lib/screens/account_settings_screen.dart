@@ -172,9 +172,10 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
     setState(() => _togglingAutoCheckin = true);
     // Location is requested alongside Bluetooth, and it has to be the Precise
     // (ACCESS_FINE_LOCATION) grant specifically -- see the AndroidManifest
-    // comment. Approximate is not merely degraded here: verified on-device,
-    // a coarse-only grant returns no BLE scan results whatsoever, so there'd
-    // be no point enabling the preference without it.
+    // comment, including the note that Android's own need for Precise here is
+    // assumed rather than measured. What is measured is this: an Approximate
+    // only grant leaves Permission.location denied, so the toggle refuses
+    // instead of switching on and then never detecting anything.
     final statuses = await [Permission.bluetoothScan, Permission.bluetoothConnect, Permission.location].request();
     if (!mounted) return;
     setState(() => _togglingAutoCheckin = false);
