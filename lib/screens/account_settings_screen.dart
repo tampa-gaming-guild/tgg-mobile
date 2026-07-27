@@ -5,6 +5,7 @@ import '../api/api_client.dart';
 import '../auth/auth_repository.dart';
 import '../beacon/auto_checkin_preference.dart';
 import '../beacon/beacon_background.dart';
+import '../config/app_config.dart';
 import '../notifications/notification_service.dart';
 import '../theme/theme_controller.dart';
 
@@ -521,6 +522,18 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
           onPressed: _confirmLogout,
           child: const Text('Log Out'),
         ),
+        // Spelled out rather than left to the corner ribbon so a bug report
+        // can say which backend it came from, which matters here because the
+        // same build writes real check-ins to whichever server it was
+        // compiled against.
+        if (AppConfig.label != null) ...[
+          const SizedBox(height: 24),
+          Text(
+            '${AppConfig.label} build\n${ApiClient.baseUrl}',
+            textAlign: TextAlign.center,
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+        ],
       ],
     );
   }

@@ -24,6 +24,41 @@ docker exec tgg-mobile-flutter flutter build apk --debug
 The repo is bind-mounted into the container at `/workspace`; `pub` and
 `gradle` caches live in named volumes so they survive container rebuilds.
 
+### Choosing a backend
+
+Which server a build talks to is fixed at compile time by `TGG_ENV`, defined
+in `lib/config/app_config.dart`:
+
+| `TGG_ENV` | Backend | Notes |
+|---|---|---|
+| `dev` (default) | `http://localhost:8080/member/api` | Reached from a physical device via `adb reverse tcp:8080 tcp:8080` |
+| `test` | `https://tampagamingguild.org/member/api` | Stripe is in test mode here, so renewal and payment flows are safe to exercise |
+| `prod` | *not available yet* | Refused at startup, see below |
+
+```
+docker exec tgg-mobile-flutter flutter build apk --debug --dart-define=TGG_ENV=test
+```
+
+Named environments rather than a raw URL, because the path differs per
+environment as well as the host — handing the full URL to whoever types the
+build command makes a typo into a plausible but wrong target.
+
+There is no `prod` yet: `https://tampagamingguild.org/api` is still served by
+the WordPress/CiviCRM site, so a build pointed there would fire login and
+check-in requests at the live public site and get HTML back instead of JSON.
+`AppConfig.validate()` throws on startup for `prod`, and for any unrecognised
+value, rather than silently falling back to the dev URL. Wire it up when the
+real docroot moves to `public_html/member/`.
+
+Non-production builds show a corner ribbon naming the environment, and
+Account Settings prints the environment and base URL at the bottom. That is
+driven by `TGG_ENV`, not by debug/release, since a release build aimed at
+`test` is otherwise indistinguishable from a real one — and this app writes
+real check-ins, including on its own via beacon auto check-in.
+
+Any deployed target must be HTTPS: cleartext is permitted only for
+`localhost` (`android/app/src/main/res/xml/network_security_config.xml`).
+
 ### Running on a real Android device (required for BLE testing)
 
 Emulators don't have real BLE radios, so background beacon detection can only

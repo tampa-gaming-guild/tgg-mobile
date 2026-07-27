@@ -2,6 +2,8 @@ import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 
+import '../config/app_config.dart';
+
 /// Thrown for auth calls that fail outright (bad credentials, locked
 /// account, network error) -- as opposed to checkIn(), which returns
 /// structured business-logic outcomes (already checked in, no session open,
@@ -29,17 +31,12 @@ class ApiConnectionException implements Exception {
 }
 
 /// Talks to the token API in the clubmanager repo
-/// (public_html/member/api/). Dev-only base URL for now -- reached from a
-/// physical device via `adb reverse tcp:8080 tcp:8080` rather than a LAN IP.
+/// (public_html/member/api/).
 class ApiClient {
-  static const String baseUrl = 'http://localhost:8080/member/api';
-
-  /// Web page root (public_html/member/), for the rare case the app needs
-  /// to open an actual web page in a webview instead of calling a JSON
-  /// endpoint -- e.g. pay-entrance.php for the self-check-in renewal flow,
-  /// or renew.php as a Stripe Checkout return target. Just `baseUrl` minus
-  /// its trailing `/api`.
-  static const String webBaseUrl = 'http://localhost:8080/member';
+  /// Chosen at build time, see AppConfig. Cleartext is permitted only for
+  /// localhost, so any deployed target has to be HTTPS (see
+  /// res/xml/network_security_config.xml).
+  static const String baseUrl = AppConfig.baseUrl;
 
   Future<Map<String, dynamic>> login(String email, String password, {String? deviceLabel}) async {
     final response = await http.post(
