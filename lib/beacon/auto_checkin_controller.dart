@@ -96,6 +96,13 @@ class AutoCheckinController {
     try {
       final result = await authRepository.authedCall((token) => _api.checkIn(token, guestNames: const []));
 
+      // Never reached the server (token refresh couldn't connect); same
+      // treatment as the thrown transport failure below.
+      if (result['offline'] == true) {
+        _retryNotBefore = DateTime.now().add(_transportRetryCooldown);
+        return;
+      }
+
       // Reached the server, so the day's automatic attempt is spent whatever
       // the verdict was -- retrying a refusal would just repeat it.
       await AutoCheckinPreference.setLastAttemptDate(AutoCheckinPreference.todayKey());
