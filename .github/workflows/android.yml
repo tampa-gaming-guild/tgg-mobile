@@ -1,0 +1,247 @@
+name: Android
+
+# Everything Android lives in this one file on purpose. `github.run_number` is
+# counted per workflow file, and it is what becomes the APK's versionCode.
+# Splitting test builds and tag builds into separate files would give each its
+# own counter, and the two would collide or go backwards -- Android rejects a
+# downgrade, and Play rejects a duplicate. For the same reason, never rename
+# this file: that resets the counter to 1.
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+# Two quick pushes to main would race each other deleting and recreating the
+# rolling pre-release, so main builds queue instead. PR runs are throwaway.
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  # Must match the `flutter:` constraint in pubspec.yaml and the SDK baked into
+  # docker/flutter/Dockerfile. Bump all three together.
+  FLUTTER_VERSION: '3.44.0'
+  JAVA_VERSION: '17'
+
+jobs:
+  verify:
+    name: Analyze and test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - run: flutter pub get
+
+      - run: flutter analyze
+
+      # TGG_ENV is a compile-time define, so a single run only ever exercises
+      # one branch of AppConfig. See the doc comment in test/app_config_test.dart.
+      - name: Test (dev)
+        run: flutter test
+
+      - name: Test (test)
+        run: flutter test --dart-define=TGG_ENV=test
+
+  build:
+    name: Build and publish
+    needs: verify
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve version and target environment
+        id: ver
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            echo "name=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
+            echo "channel=release" >> "$GITHUB_OUTPUT"
+          else
+            echo "name=0.0.${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+            echo "channel=rolling" >> "$GITHUB_OUTPUT"
+          fi
+          # Both channels currently build against the TEST backend on purpose:
+          # AppConfig.validate() still refuses TGG_ENV=prod, because
+          # tampagamingguild.org/api serves WordPress until the docroot moves.
+          # When that lands, select prod for the release channel here.
+          echo "tgg_env=test" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      # android/gradle.properties asks for -Xmx8G, which suits the dev box but
+      # not a runner sharing memory with the Kotlin daemon. Gradle ranks
+      # $GRADLE_USER_HOME/gradle.properties above the project file, so this wins
+      # without editing anything in the repo.
+      - name: Cap Gradle heap for the runner
+        run: |
+          mkdir -p ~/.gradle
+          {
+            echo 'org.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g'
+            echo 'org.gradle.daemon=false'
+          } > ~/.gradle/gradle.properties
+
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          # ~/.gradle/wrapper holds the Gradle distribution itself.
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('android/**/*.gradle.kts', 'android/gradle.properties', 'android/gradle/wrapper/gradle-wrapper.properties', 'pubspec.lock') }}
+          restore-keys: gradle-${{ runner.os }}-
+
+      - name: Cache pub
+        uses: actions/cache@v4
+        with:
+          path: ~/.pub-cache
+          key: pub-${{ runner.os }}-${{ hashFiles('pubspec.lock') }}
+          restore-keys: pub-${{ runner.os }}-
+
+      - run: flutter pub get
+
+      - name: Materialise the release keystore
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          set -euo pipefail
+          if [ -z "${KEYSTORE_B64:-}" ]; then
+            echo "::error::ANDROID_KEYSTORE_BASE64 is not set. See README, Release signing."
+            exit 1
+          fi
+          printf '%s' "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/upload.jks"
+          echo "ANDROID_KEYSTORE_PATH=$RUNNER_TEMP/upload.jks" >> "$GITHUB_ENV"
+
+      - name: Build release APK
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          flutter build apk --release \
+            --dart-define=TGG_ENV=${{ steps.ver.outputs.tgg_env }} \
+            --build-name=${{ steps.ver.outputs.name }} \
+            --build-number=${{ github.run_number }} \
+            --split-debug-info=build/symbols
+
+      - name: Build App Bundle
+        if: steps.ver.outputs.channel == 'release'
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          flutter build appbundle --release \
+            --dart-define=TGG_ENV=${{ steps.ver.outputs.tgg_env }} \
+            --build-name=${{ steps.ver.outputs.name }} \
+            --build-number=${{ github.run_number }} \
+            --split-debug-info=build/symbols
+
+      # build.gradle.kts falls back to the debug key when no keystore is
+      # configured, which is deliberate for local `flutter run --release`. It
+      # already throws when CI is set, but assert on the artifact too: a
+      # debug-signed release installs fine and can then never be upgraded.
+      - name: Assert the APK is not debug-signed
+        run: |
+          set -euo pipefail
+          APKSIGNER=$(ls -1 "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)
+          "$APKSIGNER" verify --print-certs \
+            build/app/outputs/flutter-apk/app-release.apk > certs.txt
+          cat certs.txt
+          if grep -qi 'CN=Android Debug' certs.txt; then
+            echo "::error::APK was signed with the Android debug key."
+            exit 1
+          fi
+
+      - name: Upload build outputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-${{ steps.ver.outputs.name }}
+          path: |
+            build/app/outputs/flutter-apk/app-release.apk
+            build/app/outputs/bundle/release/app-release.aab
+            build/symbols
+          if-no-files-found: warn
+          retention-days: 90
+
+      # One tag, one filename, forever, so the link handed to testers never
+      # changes. The version lives in the release notes rather than the
+      # filename. Note that GitHub's /releases/latest/download/ shortcut only
+      # resolves to non-prereleases, which is why the explicit tag is used.
+      - name: Publish rolling TEST build
+        if: steps.ver.outputs.channel == 'rolling'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.ver.outputs.name }}
+        run: |
+          set -euo pipefail
+          cp build/app/outputs/flutter-apk/app-release.apk tgg-mobile-test.apk
+          cat > notes.md <<EOF
+          Automatic build of \`main\`, pointed at the **TEST** backend.
+
+          Version \`${VERSION}\` (versionCode ${GITHUB_RUN_NUMBER}) from commit \`${GITHUB_SHA:0:7}\`.
+
+          **Download:** [tgg-mobile-test.apk](https://github.com/${GITHUB_REPOSITORY}/releases/download/latest-test/tgg-mobile-test.apk)
+
+          This link never changes. Install straight over the previous build; no
+          uninstall needed. First time only, your phone will ask you to allow
+          installing apps from your browser, and Play Protect will warn that the
+          developer is unrecognised -- choose **More details -> Install anyway**.
+          EOF
+          gh release delete latest-test --yes --cleanup-tag || true
+          gh release create latest-test tgg-mobile-test.apk \
+            --prerelease \
+            --target "$GITHUB_SHA" \
+            --title "Latest TEST build" \
+            --notes-file notes.md
+
+      - name: Publish release
+        if: steps.ver.outputs.channel == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.ver.outputs.name }}
+        run: |
+          set -euo pipefail
+          cp build/app/outputs/flutter-apk/app-release.apk "tgg-mobile-${VERSION}.apk"
+          gh release create "$GITHUB_REF_NAME" "tgg-mobile-${VERSION}.apk" \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes
+
+      # Inert until the repo variable PLAY_ENABLED is set to 'true'. Before
+      # flipping it: the developer account must exist, the app must be created
+      # in Play Console under com.tampagamingguild.tggmobile, and the FIRST
+      # bundle must be uploaded by hand -- the API cannot create an app's
+      # initial release. See README, Google Play.
+      - name: Upload to Google Play (internal track)
+        if: steps.ver.outputs.channel == 'release' && vars.PLAY_ENABLED == 'true'
+        uses: r0adkll/upload-google-play@v1
+        with:
+          serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+          packageName: com.tampagamingguild.tggmobile
+          releaseFiles: build/app/outputs/bundle/release/app-release.aab
+          track: internal
+          status: completed

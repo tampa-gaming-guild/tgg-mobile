@@ -44,6 +44,13 @@ app.*.map.json
 /android/app/profile
 /android/app/release
 
+# Release signing material. android/.gitignore already covers these, but only
+# inside android/ -- this repo is public, so cover the whole tree. The keystore
+# itself is expected to live outside the repo entirely; see README.
+*.jks
+*.keystore
+key.properties
+
 # Brand master artwork (EPS/PDF/JPG lockups). Too large to track and not needed
 # to build; only the derived icons under assets/icon/ are committed.
 /Logos/
