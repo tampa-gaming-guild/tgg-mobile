@@ -1,4 +1,4 @@
-package com.tampagamingguild.tgg_mobile
+package com.tampagamingguild.tggmobile
 
 import io.flutter.embedding.android.FlutterFragmentActivity
 import io.flutter.embedding.engine.FlutterEngine

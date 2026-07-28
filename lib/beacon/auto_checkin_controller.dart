@@ -26,8 +26,11 @@ import 'ibeacon_reading.dart';
 /// consume the day's attempt -- that's a common condition at a venue, and
 /// burning the attempt on it would leave the member silently un-checked-in
 /// with no retry for the whole session. Those retry after
-/// [_transportRetryCooldown]; only a definitive answer from the server ends
-/// the day's attempts.
+/// [_transportRetryCooldown]. Nor does a `no_session_open` refusal: unlike
+/// every other verdict, that one expires on its own as soon as the check-in
+/// window opens, so it gets [AutoCheckinPreference]'s longer, persisted
+/// cooldown instead. Every other definitive answer from the server ends the
+/// day's attempts.
 ///
 /// No guest-bring-along support here (unlike CheckInScreen's manual flow) --
 /// there's no one to ask. A beacon-triggered check-in is always solo.
@@ -91,6 +94,10 @@ class AutoCheckinController {
       await _stop();
       return;
     }
+    // A cooldown the background path set while the app was away still applies:
+    // resuming the app shouldn't turn a 10-minute backoff into an immediate
+    // retry of a window that hasn't opened yet.
+    if (await AutoCheckinPreference.inRetryCooldown()) return;
 
     _inFlight = true;
     try {
@@ -103,8 +110,21 @@ class AutoCheckinController {
         return;
       }
 
-      // Reached the server, so the day's automatic attempt is spent whatever
-      // the verdict was -- retrying a refusal would just repeat it.
+      // The one refusal that resolves itself: the member is here before the
+      // check-in window opened. Keep scanning and leave the day's attempt
+      // unspent so a later advertisement picks them up once it does, backing
+      // off in the meantime. Shares the persisted cooldown with the background
+      // path so the two can't undercut each other.
+      if (result['code'] == 'no_session_open') {
+        await AutoCheckinPreference.setRetryNotBefore(
+          DateTime.now().add(AutoCheckinPreference.retryCooldown),
+        );
+        _retryNotBefore = DateTime.now().add(AutoCheckinPreference.retryCooldown);
+        return;
+      }
+
+      // Every other verdict is settled for the day -- retrying would repeat it.
+      await AutoCheckinPreference.clearRetryNotBefore();
       await AutoCheckinPreference.setLastAttemptDate(AutoCheckinPreference.todayKey());
       await _stop();
 

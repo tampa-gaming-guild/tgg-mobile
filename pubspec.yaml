@@ -50,6 +50,29 @@ dev_dependencies:
   # package. See that file for information about deactivating specific lint
   # rules and activating additional ones.
   flutter_lints: ^6.0.0
+  flutter_launcher_icons: ^0.14.4
+
+# Launcher icon generation. The sources under assets/icon/ are produced from the
+# brand master in Logos/ (untracked); regenerate them with the script noted in
+# README, then run `dart run flutter_launcher_icons` and commit the output.
+#
+# Android masks an adaptive icon down to the centre 72 of 108dp, and a circle is
+# the tightest mask. tgg-icon-foreground.png is sized so the artwork's diagonal
+# clears that circle -- do not scale the mark up without re-checking the mask
+# shapes, or the d20 loses its right-hand faces.
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: "assets/icon/tgg-icon.png"
+  adaptive_icon_background: "#0b111f"
+  adaptive_icon_foreground: "assets/icon/tgg-icon-foreground.png"
+  adaptive_icon_monochrome: "assets/icon/tgg-icon-mono.png"
+  # The source PNGs already contain their safe-zone padding, verified against
+  # circle/squircle/rounded masks. The package's default 16% inset would stack
+  # on top of that and shrink the mark to roughly 45% of the canvas.
+  adaptive_icon_foreground_inset: 0
+  # iOS rejects icons with an alpha channel.
+  remove_alpha_ios: true
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec

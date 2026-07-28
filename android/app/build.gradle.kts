@@ -5,7 +5,7 @@ plugins {
 }
 
 android {
-    namespace = "com.tampagamingguild.tgg_mobile"
+    namespace = "com.tampagamingguild.tggmobile"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
@@ -17,8 +17,9 @@ android {
     }
 
     defaultConfig {
-        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId = "com.tampagamingguild.tgg_mobile"
+        // Permanent once the app is published to Google Play -- it cannot be
+        // changed afterwards without shipping a brand new listing.
+        applicationId = "com.tampagamingguild.tggmobile"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion

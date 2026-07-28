@@ -1,4 +1,4 @@
-package com.tampagamingguild.tgg_mobile
+package com.tampagamingguild.tggmobile
 
 import android.annotation.SuppressLint
 import android.app.PendingIntent

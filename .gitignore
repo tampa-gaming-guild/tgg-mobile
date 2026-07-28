@@ -43,3 +43,7 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Brand master artwork (EPS/PDF/JPG lockups). Too large to track and not needed
+# to build; only the derived icons under assets/icon/ are committed.
+/Logos/

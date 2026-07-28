@@ -19,8 +19,12 @@ import 'club_beacon.dart';
 /// AuthRepository instance to inherit here, so this rebuilds what it needs
 /// from device storage and reports via a notification rather than a snackbar.
 class BeaconBackground {
-  static const _channel = MethodChannel('com.tampagamingguild.tgg_mobile/beacon_control');
-  static const backgroundChannel = MethodChannel('com.tampagamingguild.tgg_mobile/beacon_background');
+  // These strings must match CONTROL_CHANNEL in BeaconBackgroundChannel.kt and
+  // BACKGROUND_CHANNEL in BeaconBackgroundRunner.kt exactly. They are opaque
+  // names, so a mismatch compiles and launches cleanly and then simply never
+  // delivers a call -- change both sides together.
+  static const _channel = MethodChannel('com.tampagamingguild.tggmobile/beacon_control');
+  static const backgroundChannel = MethodChannel('com.tampagamingguild.tggmobile/beacon_background');
 
   /// Arms detection. Safe to call repeatedly; re-registering replaces the
   /// existing scan rather than stacking another one.
@@ -59,6 +63,7 @@ class BeaconBackground {
   static Future<void> runCheckIn() async {
     if (await AutoCheckinPreference.lastAttemptDate() == AutoCheckinPreference.todayKey()) return;
     if (!await AutoCheckinPreference.isEnabled()) return;
+    if (await AutoCheckinPreference.inRetryCooldown()) return;
 
     final auth = AuthRepository();
     final api = ApiClient();
@@ -71,6 +76,21 @@ class BeaconBackground {
     }
     if (result['offline'] == true) return;
 
+    // The window isn't open yet -- the member arrived early. Unlike every other
+    // verdict this one expires on its own, so the day's attempt stays unspent
+    // and the scan stays registered; back off instead, and let a later sighting
+    // try again once the window has opened. Spending the day here was the old
+    // behaviour, and it silently stranded anyone who showed up more than an
+    // hour before the session (check-in opens 1h ahead) -- hosts, mostly.
+    if (result['code'] == 'no_session_open') {
+      debugPrint('Beacon detected before the check-in window opened; backing off and staying armed.');
+      await AutoCheckinPreference.setRetryNotBefore(
+        DateTime.now().add(AutoCheckinPreference.retryCooldown),
+      );
+      return;
+    }
+
+    await AutoCheckinPreference.clearRetryNotBefore();
     await AutoCheckinPreference.setLastAttemptDate(AutoCheckinPreference.todayKey());
     // The registered scan reports every sighting, so without this the OS
     // would keep waking us for as long as the member stays in the building,
@@ -92,8 +112,9 @@ class BeaconBackground {
         body: 'The club beacon was detected, but a payment is needed before you can check in. Open the app to finish.',
       );
     }
-    // A plain refusal (already checked in, no session open) stays silent:
-    // nobody asked for this, so it shouldn't interrupt with a non-problem.
+    // A plain refusal (e.g. already checked in) stays silent: nobody asked
+    // for this, so it shouldn't interrupt with a non-problem. (no_session_open
+    // never reaches here -- it returns above, before the day is stamped.)
   }
 }
 

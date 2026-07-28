@@ -1,4 +1,4 @@
-package com.tampagamingguild.tgg_mobile
+package com.tampagamingguild.tggmobile
 
 import android.content.Context
 import io.flutter.plugin.common.BinaryMessenger
@@ -14,7 +14,7 @@ import io.flutter.plugin.common.MethodChannel
  * execute (see BeaconBackgroundRunner).
  */
 object BeaconBackgroundChannel {
-    const val CONTROL_CHANNEL = "com.tampagamingguild.tgg_mobile/beacon_control"
+    const val CONTROL_CHANNEL = "com.tampagamingguild.tggmobile/beacon_control"
 
     private const val PREFS_NAME = "tgg_beacon_background"
     private const val KEY_CALLBACK_HANDLE = "callback_handle"

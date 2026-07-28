@@ -1,4 +1,4 @@
-package com.tampagamingguild.tgg_mobile
+package com.tampagamingguild.tggmobile
 
 import android.bluetooth.le.BluetoothLeScanner
 import android.bluetooth.le.ScanResult
@@ -19,7 +19,7 @@ import android.util.Log
  */
 class BeaconScanReceiver : BroadcastReceiver() {
     companion object {
-        const val ACTION_BEACON_SCAN_RESULT = "com.tampagamingguild.tgg_mobile.BEACON_SCAN_RESULT"
+        const val ACTION_BEACON_SCAN_RESULT = "com.tampagamingguild.tggmobile.BEACON_SCAN_RESULT"
         private const val TAG = "BeaconScanReceiver"
     }
 

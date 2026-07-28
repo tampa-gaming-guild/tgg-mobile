@@ -1,4 +1,4 @@
-package com.tampagamingguild.tgg_mobile
+package com.tampagamingguild.tggmobile
 
 import android.content.Context
 import android.os.Handler
@@ -24,7 +24,7 @@ import io.flutter.view.FlutterCallbackInformation
  */
 object BeaconBackgroundRunner {
     private const val TAG = "BeaconBackgroundRunner"
-    const val BACKGROUND_CHANNEL = "com.tampagamingguild.tgg_mobile/beacon_background"
+    const val BACKGROUND_CHANNEL = "com.tampagamingguild.tggmobile/beacon_background"
 
     /** Ceiling on how long Dart gets before we tear the engine down anyway. */
     private const val TIMEOUT_MS = 25_000L
