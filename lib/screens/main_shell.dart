@@ -28,8 +28,9 @@ import 'volunteer_screen.dart';
 /// tab but isn't dropped into it uninvited.
 ///
 /// Tab visibility is re-checked every 5 minutes (a session's hosting window
-/// opens 2 hours before its start_time -- see Event::getActiveSession() --
-/// so 5-minute granularity is plenty to catch that transition), so the
+/// opens 2 hours before its start_time and stays open until 2 hours after
+/// its end_time -- see Event::getActiveSession() -- so 5-minute granularity
+/// is plenty to catch either transition), so the
 /// Hosting/Check-In tabs can appear without a relaunch if a window opens
 /// while the app is already running -- that's also what lets HostScreen's
 /// own faster 20-second pending-payment poll start. Also re-checked whenever
