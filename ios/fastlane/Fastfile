@@ -1,0 +1,55 @@
+default_platform(:ios)
+
+def asc_api_key
+  app_store_connect_api_key(
+    key_id: ENV.fetch('ASC_KEY_ID'),
+    issuer_id: ENV.fetch('ASC_ISSUER_ID'),
+    key_content: ENV.fetch('ASC_KEY_CONTENT'),
+    is_key_content_base64: true,
+  )
+end
+
+platform :ios do
+  # Run manually via workflow_dispatch (or locally, MATCH_GIT_URL/MATCH_PASSWORD
+  # set) once to generate the distribution cert + provisioning profile, and
+  # again whenever the cert is renewed (yearly). Never run by the normal build
+  # job -- that always uses readonly mode, see release_testflight below.
+  desc 'Generate/refresh the App Store distribution cert and provisioning profile'
+  lane :bootstrap_signing do
+    asc_api_key
+    match(type: 'appstore', readonly: false)
+  end
+
+  # The lane the ios.yml build job actually runs. readonly: true is
+  # deliberate -- a normal CI run should never be able to mutate the shared
+  # cert store, only bootstrap_signing (run intentionally, by a human) can.
+  desc 'Build and upload a release to TestFlight (internal testers)'
+  lane :release_testflight do
+    api_key = asc_api_key
+    match(type: 'appstore', readonly: true)
+
+    build_app(
+      workspace: 'Runner.xcworkspace',
+      scheme: 'Runner',
+      export_method: 'app-store',
+      skip_build_archive: false,
+      # Relative to this lane's working directory (ios/), so the .ipa lands
+      # at <repo root>/build/ios/ipa -- matches the artifact path ios.yml
+      # uploads, which runs with the default (repo root) working directory.
+      output_directory: '../build/ios/ipa',
+      xcargs: [
+        'CODE_SIGN_STYLE=Manual',
+        "DEVELOPMENT_TEAM=#{ENV.fetch('APPLE_TEAM_ID')}",
+        "CODE_SIGN_IDENTITY=Apple Distribution",
+        "PROVISIONING_PROFILE_SPECIFIER=#{lane_context[SharedValues::MATCH_PROVISIONING_PROFILE_MAPPING][ENV.fetch('IOS_BUNDLE_ID', 'com.tampagamingguild.tggmobile')]}",
+      ].join(' '),
+    )
+
+    upload_to_testflight(
+      api_key: api_key,
+      groups: [ENV.fetch('TESTFLIGHT_GROUP', 'Internal')],
+      skip_waiting_for_build_processing: true,
+      distribute_external: false,
+    )
+  end
+end

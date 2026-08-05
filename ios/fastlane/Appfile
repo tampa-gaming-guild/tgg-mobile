@@ -1,0 +1,8 @@
+# Values come from the environment rather than being hardcoded here so
+# nothing Apple-account-specific has to live in this public repo. See
+# README, iOS signing, for where each of these is set (CI secrets) and what
+# Bob needs to have on hand to fill them in locally for `bootstrap_signing`.
+app_identifier(ENV.fetch('IOS_BUNDLE_ID', 'com.tampagamingguild.tggmobile'))
+apple_id(ENV['ASC_APPLE_ID']) if ENV['ASC_APPLE_ID']
+itc_team_id(ENV['ASC_TEAM_ID']) if ENV['ASC_TEAM_ID']
+team_id(ENV['APPLE_TEAM_ID']) if ENV['APPLE_TEAM_ID']

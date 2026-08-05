@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
 
@@ -445,34 +447,40 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
             ),
           ),
         ),
-        const SizedBox(height: 16),
-        Card(
-          child: SwitchListTile(
-            title: const Text('Auto Check-In (Bluetooth Beacon)'),
-            subtitle: const Text(
-                "Check yourself in automatically when you arrive and your phone detects the club's Bluetooth beacon. Works with the app closed."),
-            value: _autoCheckinEnabled,
-            onChanged: _togglingAutoCheckin ? null : _toggleAutoCheckin,
-            secondary: _togglingAutoCheckin ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2)) : null,
-          ),
-        ),
-        // Only shown once auto check-in is on, since on its own it controls
-        // nothing. Its real job is being a second chance: notification
-        // permission is requested when auto check-in is switched on, and if
-        // that was declined there'd otherwise be no way back to it from
-        // inside the app.
-        if (_autoCheckinEnabled) ...[
-          const SizedBox(height: 8),
+        // Beacon auto check-in is Android-only for now: the native Core
+        // Location port for iOS hasn't been built yet (see README), so the
+        // preference toggle that gates the whole feature stays hidden there
+        // rather than offering something that silently does nothing.
+        if (Platform.isAndroid) ...[
+          const SizedBox(height: 16),
           Card(
             child: SwitchListTile(
-              title: const Text('Auto Check-In Notifications'),
+              title: const Text('Auto Check-In (Bluetooth Beacon)'),
               subtitle: const Text(
-                  'Tell me when auto check-in checks me in, or when it needs a payment first. With the app closed this is the only way to know either happened.'),
-              value: _checkinAlertsEnabled,
-              onChanged: _togglingCheckinAlerts ? null : _toggleCheckinAlerts,
-              secondary: _togglingCheckinAlerts ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2)) : null,
+                  "Check yourself in automatically when you arrive and your phone detects the club's Bluetooth beacon. Works with the app closed."),
+              value: _autoCheckinEnabled,
+              onChanged: _togglingAutoCheckin ? null : _toggleAutoCheckin,
+              secondary: _togglingAutoCheckin ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2)) : null,
             ),
           ),
+          // Only shown once auto check-in is on, since on its own it controls
+          // nothing. Its real job is being a second chance: notification
+          // permission is requested when auto check-in is switched on, and if
+          // that was declined there'd otherwise be no way back to it from
+          // inside the app.
+          if (_autoCheckinEnabled) ...[
+            const SizedBox(height: 8),
+            Card(
+              child: SwitchListTile(
+                title: const Text('Auto Check-In Notifications'),
+                subtitle: const Text(
+                    'Tell me when auto check-in checks me in, or when it needs a payment first. With the app closed this is the only way to know either happened.'),
+                value: _checkinAlertsEnabled,
+                onChanged: _togglingCheckinAlerts ? null : _toggleCheckinAlerts,
+                secondary: _togglingCheckinAlerts ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2)) : null,
+              ),
+            ),
+          ],
         ],
         if (widget.authRepository.hasPermission('edit checkins')) ...[
           const SizedBox(height: 16),

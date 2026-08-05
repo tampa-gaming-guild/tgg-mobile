@@ -1,0 +1,10 @@
+# Certs and provisioning profiles live in a separate PRIVATE repo, never in
+# tgg-mobile itself -- this repo is public (see .gitignore's note on the
+# Android keystore for the same reasoning). File contents are still
+# encrypted with MATCH_PASSWORD before they're committed, but keeping the
+# repo private too avoids leaking cert/profile metadata and commit cadence
+# to every visitor, and keeps write access scoped to just Bob and CI.
+git_url(ENV.fetch('MATCH_GIT_URL', 'https://github.com/tampa-gaming-guild/tgg-mobile-ios-signing'))
+storage_mode('git')
+type('appstore')
+app_identifier(ENV.fetch('IOS_BUNDLE_ID', 'com.tampagamingguild.tggmobile'))

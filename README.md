@@ -80,10 +80,18 @@ no USB passthrough needed:
 ### iOS
 
 Xcode only runs on macOS — no container or emulation trick works around that,
-so iOS builds can't happen on this (Windows) machine at all. Plan: CI builds
-via a GitHub Actions macOS runner once the Android app is in decent shape;
-someone with a physical iPhone will need to sideload/TestFlight it for actual
-BLE testing there, since the iOS Simulator has no real Bluetooth radio either.
+so iOS builds can't happen on this (Windows) machine at all. Every iOS build,
+sign, and archive step runs on a GitHub Actions macOS runner instead; see
+[iOS builds and TestFlight](#ios-builds-and-testflight) below for the pipeline
+and how testers get a build.
+
+The BLE beacon auto check-in feature itself hasn't been ported to iOS yet —
+the toggle is hidden there (`AccountSettingsScreen`, `Platform.isAndroid`
+gate) until the native Core Location/`CLBeaconRegion` port lands. Android's
+CoreBluetooth-style background-scan approach doesn't transfer: iOS needs
+region monitoring and an "Always" location grant, and the iOS Simulator has
+no real Bluetooth radio either way, so that work will need a physical iPhone
+regardless.
 
 ## Builds and releases
 
@@ -169,6 +177,110 @@ Before flipping it: register (as an **organization**, which exempts you from the
 12-testers-for-14-days rule that applies to personal accounts), create the app
 under `com.tampagamingguild.tggmobile`, and upload the first bundle **by hand** —
 the API cannot create an app's initial release.
+
+### iOS builds and TestFlight
+
+CI lives in `.github/workflows/ios.yml`, a separate file from Android's on
+purpose — see that file's header comment for why splitting is fine here even
+though `android.yml` deliberately isn't split. `verify` runs on
+`ubuntu-latest` (no Xcode needed for `flutter analyze`/`flutter test`);
+`build` runs on a `macos-14` runner, since that's the only way to build,
+sign, and archive an iOS app without a physical Mac.
+
+| Trigger | Environment | Result |
+|---|---|---|
+| Pull request | — | `flutter analyze` + tests only, no artifact |
+| Push to `main` | `test` | Uploaded to TestFlight (Internal Testing group) |
+| Tag `v*` | `test` for now, `prod` later | Uploaded to TestFlight (Internal Testing group) |
+
+Every row ends at TestFlight, unlike Android's table: there's no iOS
+equivalent of handing someone an installable file directly. Apple only
+allows sideloading outside TestFlight via enterprise or ad-hoc UDID
+registration, neither of which fits a public club app, so TestFlight is the
+only distribution path — don't add a GitHub Release/direct-download row to
+match Android without re-deriving why they differ.
+
+`CFBundleVersion` comes from `ios.yml`'s own `github.run_number`, which is
+an **independent counter** from `android.yml`'s (each workflow file gets its
+own). That's fine: Apple only requires it to increase within this bundle
+ID's own TestFlight history, never compared against Android's `versionCode`.
+`CFBundleShortVersionString` is resolved the same way as Android's
+`versionName` — from the `v*` tag, or `0.0.<run>` off `main`.
+
+#### Apple Developer Program prerequisites
+
+One-time setup, done by a human in Apple's portals — CI can't bootstrap any
+of this:
+
+1. **Enroll in the Apple Developer Program** ($99/yr). Individual enrollment
+   is faster but puts a personal legal name on TestFlight/the App Store with
+   no clean upgrade path later; organization enrollment shows "Tampa Gaming
+   Guild" but needs a **D-U-N-S number** for the club, which can take days to
+   weeks — start that lookup early if choosing this path.
+2. Register the App ID `com.tampagamingguild.tggmobile` in the Apple
+   Developer portal, matching the bundle id already in `project.pbxproj` and
+   Android's `applicationId`. No extra capabilities needed yet — Background
+   Modes gets added once the native beacon port lands.
+3. Create the app record in App Store Connect (**My Apps → New App**) — like
+   Play above, the API can't create an app's first record, only upload to an
+   existing one.
+4. Generate an **App Store Connect API key** (Users and Access →
+   Integrations → App Store Connect API, role **App Manager**). Download the
+   `.p8` immediately; Apple only allows one download. This is what lets CI
+   authenticate non-interactively — no Apple ID/2FA prompt to clear, which
+   matters since nobody will ever be sitting at a Mac to clear one.
+5. Add each tester as an App Store Connect user first (**Users and Access →
+   People**, by Apple ID email), then create an **Internal Testing** group
+   under the TestFlight tab and add them to it, with **Automatic
+   Distribution** turned on. Internal testers (up to 100) get a build the
+   moment Apple finishes processing it, with no per-build review — unlike
+   external/public-link testers, who'd need a short Beta App Review each
+   time.
+
+### For testers (TestFlight)
+
+Unlike Android's fixed sideload link, there's no file to hand anyone. Once
+added to App Store Connect and the Internal Testing group (above), a tester
+gets a TestFlight invite by email; installing the TestFlight app and
+accepting it is the only manual step. After that, new builds arrive
+automatically — no re-announcement needed the way Android's sideload builds
+require.
+
+### iOS signing
+
+Builds are signed via [`fastlane match`](https://docs.fastlane.tools/actions/match/)
+rather than a manually exported `.p12`/`.mobileprovision`: match can
+generate the distribution cert and provisioning profile itself, from CI, via
+the App Store Connect API — no step ever needs Xcode open on a Mac nobody
+has, not even the first time.
+
+Certs/profiles live in a **separate, private** repo
+(`tampa-gaming-guild/tgg-mobile-ios-signing`), never in this one — this repo
+is public, same reasoning as the Android keystore. File contents are
+encrypted with `MATCH_PASSWORD` regardless, but a private repo also keeps
+cert/profile metadata and commit cadence off public view and write access
+scoped to just Bob and CI.
+
+Two fastlane lanes (`ios/fastlane/Fastfile`):
+- `bootstrap_signing` — generates/refreshes the cert and profile. Run once
+  via `workflow_dispatch`, and again whenever the cert is renewed (yearly).
+- `release_testflight` — what the normal `build` job runs. Always uses
+  `match(readonly: true)`: a routine CI run should never be able to mutate
+  the shared cert store, only an intentional `bootstrap_signing` run can.
+
+CI secrets needed: `APPLE_TEAM_ID`, `ASC_KEY_ID`, `ASC_ISSUER_ID`,
+`ASC_KEY_CONTENT` (the downloaded `.p8`, base64-encoded — same
+`[Convert]::ToBase64String(...)` approach as the Android keystore, not
+`certutil -encode`), `MATCH_GIT_URL`, `MATCH_GIT_BASIC_AUTHORIZATION` (a PAT
+scoped to the signing repo), and `MATCH_PASSWORD`. The repo variable
+`TESTFLIGHT_GROUP` names which internal group builds go to (defaults to
+`Internal`).
+
+> **Back up `MATCH_PASSWORD` and the App Store Connect API key before the
+> first release**, the same way the Android keystore gets backed up. A new
+> API key can always be generated, but losing the match passphrase makes
+> every cert/profile in the signing repo unreadable, and the only remedy is
+> re-running `bootstrap_signing` from scratch.
 
 ### Launcher icon
 

@@ -1,0 +1,149 @@
+name: iOS
+
+# A separate file from android.yml on purpose, unlike that file's own
+# "everything lives in one file" rule -- here it's fine to split, and worth
+# saying explicitly so that rule doesn't get over-generalized across
+# platforms. android.yml keeps Android in one file because github.run_number
+# (counted per workflow file) becomes the APK's versionCode, and Android
+# rejects a downgrade / Play rejects a duplicate. This file's run_number
+# becomes iOS's CFBundleVersion instead, and only has to be monotonically
+# increasing within THIS bundle ID's own TestFlight history -- it is never
+# compared against Android's versionCode, so the two counters running
+# independently is harmless.
+#
+# TestFlight is the only distribution channel here, unlike Android's GitHub
+# Release sideload path: Apple doesn't allow arbitrary sideloading outside
+# enterprise/ad-hoc UDID registration, neither of which fits a public club
+# app, so there is no GitHub Release / direct-download mirror step below --
+# don't add one to match Android without re-deriving why they differ.
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+concurrency:
+  group: ios-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  # Must match android.yml's FLUTTER_VERSION -- there is no shared source of
+  # truth between the two files today, bump both together.
+  FLUTTER_VERSION: '3.44.0'
+  # Bump alongside Apple's periodically-rising minimum Xcode/SDK requirement
+  # for new App Store/TestFlight submissions.
+  XCODE_VERSION: '15.4'
+
+jobs:
+  verify:
+    name: Analyze and test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - run: flutter pub get
+
+      - run: flutter analyze
+
+      # Same reasoning as android.yml: TGG_ENV is a compile-time define, so a
+      # single run only exercises one branch of AppConfig.
+      - name: Test (dev)
+        run: flutter test
+
+      - name: Test (test)
+        run: flutter test --dart-define=TGG_ENV=test
+
+  build:
+    name: Build and publish to TestFlight
+    needs: verify
+    if: github.event_name != 'pull_request'
+    # macOS runners bill roughly 10x Linux -- verify deliberately stays on
+    # ubuntu-latest above since neither analyze nor test touches native iOS
+    # code; only this job needs Xcode.
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve version and target environment
+        id: ver
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            echo "name=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
+            echo "channel=release" >> "$GITHUB_OUTPUT"
+          else
+            echo "name=0.0.${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+            echo "channel=rolling" >> "$GITHUB_OUTPUT"
+          fi
+          # Same as android.yml: both channels build against the TEST
+          # backend on purpose until AppConfig.validate() allows prod.
+          echo "tgg_env=test" >> "$GITHUB_OUTPUT"
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.3'
+          bundler-cache: true
+          working-directory: ios
+
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: ${{ env.XCODE_VERSION }}
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - run: flutter pub get
+
+      # Compiles the Dart AOT snapshot and stages Runner.xcworkspace, but
+      # doesn't sign it -- fastlane (match + gym) handles signing below.
+      # No `pod install` step: this project uses Swift Package Manager for
+      # plugins (see Flutter/ephemeral/Packages/FlutterGeneratedPluginSwiftPackage
+      # in the Xcode project), not CocoaPods, so `flutter pub get` alone is
+      # enough to regenerate the plugin package graph.
+      - name: Flutter build (no codesign)
+        run: |
+          flutter build ios --release --no-codesign \
+            --dart-define=TGG_ENV=${{ steps.ver.outputs.tgg_env }} \
+            --build-name=${{ steps.ver.outputs.name }} \
+            --build-number=${{ github.run_number }} \
+            --split-debug-info=build/ios/symbols
+
+      - name: Build and upload to TestFlight
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_CONTENT: ${{ secrets.ASC_KEY_CONTENT }}
+          MATCH_GIT_URL: ${{ secrets.MATCH_GIT_URL }}
+          MATCH_GIT_BASIC_AUTHORIZATION: ${{ secrets.MATCH_GIT_BASIC_AUTHORIZATION }}
+          MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
+          TESTFLIGHT_GROUP: ${{ vars.TESTFLIGHT_GROUP }}
+        run: bundle exec fastlane ios release_testflight
+        working-directory: ios
+
+      - name: Upload build outputs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-${{ steps.ver.outputs.name }}
+          # CI debugging only, not a distribution path -- see header comment.
+          path: |
+            build/ios/ipa/*.ipa
+            build/ios/symbols
+          if-no-files-found: warn
+          retention-days: 14

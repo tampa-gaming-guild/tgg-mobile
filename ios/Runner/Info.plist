@@ -26,6 +26,17 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<!-- Declared even though the beacon toggle is hidden on iOS for now
+	     (see AccountSettingsScreen): GeneratedPluginRegistrant registers
+	     flutter_blue_plus_darwin and permission_handler_apple at launch
+	     regardless, and if either touches CoreBluetooth/CoreLocation eagerly
+	     rather than lazily, a missing usage string crashes the app on launch
+	     on every device. UIBackgroundModes is deliberately NOT added here,
+	     since that's only needed once the native beacon port lands. -->
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>TGG Mobile uses Bluetooth to detect the club's check-in beacon when Auto Check-In is enabled.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>TGG Mobile uses your location to detect the club's check-in beacon when Auto Check-In is enabled.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
