@@ -10,6 +10,18 @@ def asc_api_key
 end
 
 platform :ios do
+  # No-op unless ENV['CI'] is set (GitHub Actions sets it automatically), so
+  # this doesn't interfere with bootstrap_signing's "or locally" case below.
+  # Without it, match's certificate import falls back to the runner's
+  # login.keychain, which has no known password in a non-interactive
+  # session -- security/Xcode then tries to pop a GUI unlock prompt that
+  # nothing can ever click, and the job just hangs until it times out.
+  # setup_ci creates a temporary keychain, unlocks it, makes it the
+  # default, and disables that prompt.
+  before_all do
+    setup_ci
+  end
+
   # Run manually via workflow_dispatch (or locally, MATCH_GIT_URL/MATCH_PASSWORD
   # set) once to generate the distribution cert + provisioning profile, and
   # again whenever the cert is renewed (yearly). Never run by the normal build
