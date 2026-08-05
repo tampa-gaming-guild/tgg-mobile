@@ -26,6 +26,12 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<!-- Answers TestFlight's export-compliance question at upload time
+	     instead of leaving each build "Missing Compliance" until someone
+	     answers it by hand in App Store Connect: the app only talks to its
+	     own API over standard HTTPS/TLS, no custom encryption. -->
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<!-- Declared even though the beacon toggle is hidden on iOS for now
 	     (see AccountSettingsScreen): GeneratedPluginRegistrant registers
 	     flutter_blue_plus_darwin and permission_handler_apple at launch
