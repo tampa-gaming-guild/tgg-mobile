@@ -37,11 +37,17 @@ platform :ios do
       # at <repo root>/build/ios/ipa -- matches the artifact path ios.yml
       # uploads, which runs with the default (repo root) working directory.
       output_directory: '../build/ios/ipa',
+      # Quoting matters here: xcodebuild tokenizes the whole xcargs string on
+      # whitespace, and both of these values contain spaces ("Apple
+      # Distribution", "match AppStore <bundle id>") -- unquoted, the
+      # trailing words get parsed as stray positional args instead of part
+      # of the KEY=value pair, and one of them gets mistaken for a build
+      # action ("Unknown build action 'Distribution'").
       xcargs: [
         'CODE_SIGN_STYLE=Manual',
         "DEVELOPMENT_TEAM=#{ENV.fetch('APPLE_TEAM_ID')}",
-        "CODE_SIGN_IDENTITY=Apple Distribution",
-        "PROVISIONING_PROFILE_SPECIFIER=#{lane_context[SharedValues::MATCH_PROVISIONING_PROFILE_MAPPING][ENV.fetch('IOS_BUNDLE_ID', 'com.tampagamingguild.tggmobile')]}",
+        'CODE_SIGN_IDENTITY="Apple Distribution"',
+        "PROVISIONING_PROFILE_SPECIFIER=\"#{lane_context[SharedValues::MATCH_PROVISIONING_PROFILE_MAPPING][ENV.fetch('IOS_BUNDLE_ID', 'com.tampagamingguild.tggmobile')]}\"",
       ].join(' '),
     )
 
