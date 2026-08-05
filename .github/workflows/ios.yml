@@ -20,9 +20,21 @@ name: iOS
 on:
   pull_request:
     branches: [main]
+    paths: &ios-paths
+      - 'lib/**'
+      - 'test/**'
+      - 'assets/**'
+      - 'pubspec.yaml'
+      - 'pubspec.lock'
+      - 'ios/**'
+      - '.github/workflows/ios.yml'
   push:
     branches: [main]
     tags: ['v*']
+    # Tag pushes have no prior ref to diff against, so GitHub runs the
+    # workflow unconditionally regardless of this filter -- fine here, a
+    # release tag should always produce a real build either way.
+    paths: *ios-paths
   workflow_dispatch:
     inputs:
       lane:
