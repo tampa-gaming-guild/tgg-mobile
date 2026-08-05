@@ -28,6 +28,23 @@ platform :ios do
     api_key = asc_api_key
     match(type: 'appstore', readonly: true)
 
+    # Scoped to the Runner target only, and applied to the .pbxproj rather
+    # than forced globally via xcargs: this workspace's Flutter plugins are
+    # Swift Package Manager dependencies (not CocoaPods), and SPM package
+    # targets don't support manual provisioning profiles at all. Forcing
+    # CODE_SIGN_STYLE=Manual on the whole build via xcargs applied it to
+    # those package targets too and broke the archive ("does not support
+    # provisioning profiles"). Runner is the only target that ships as an
+    # app and needs one.
+    update_code_signing_settings(
+      use_automatic_signing: false,
+      path: 'Runner.xcodeproj',
+      team_id: ENV.fetch('APPLE_TEAM_ID'),
+      code_sign_identity: 'Apple Distribution',
+      profile_name: lane_context[SharedValues::MATCH_PROVISIONING_PROFILE_MAPPING][ENV.fetch('IOS_BUNDLE_ID', 'com.tampagamingguild.tggmobile')],
+      targets: ['Runner'],
+    )
+
     build_app(
       workspace: 'Runner.xcworkspace',
       scheme: 'Runner',
@@ -37,18 +54,6 @@ platform :ios do
       # at <repo root>/build/ios/ipa -- matches the artifact path ios.yml
       # uploads, which runs with the default (repo root) working directory.
       output_directory: '../build/ios/ipa',
-      # Quoting matters here: xcodebuild tokenizes the whole xcargs string on
-      # whitespace, and both of these values contain spaces ("Apple
-      # Distribution", "match AppStore <bundle id>") -- unquoted, the
-      # trailing words get parsed as stray positional args instead of part
-      # of the KEY=value pair, and one of them gets mistaken for a build
-      # action ("Unknown build action 'Distribution'").
-      xcargs: [
-        'CODE_SIGN_STYLE=Manual',
-        "DEVELOPMENT_TEAM=#{ENV.fetch('APPLE_TEAM_ID')}",
-        'CODE_SIGN_IDENTITY="Apple Distribution"',
-        "PROVISIONING_PROFILE_SPECIFIER=\"#{lane_context[SharedValues::MATCH_PROVISIONING_PROFILE_MAPPING][ENV.fetch('IOS_BUNDLE_ID', 'com.tampagamingguild.tggmobile')]}\"",
-      ].join(' '),
     )
 
     upload_to_testflight(
