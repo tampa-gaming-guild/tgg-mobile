@@ -57,9 +57,15 @@ env:
   # Must match android.yml's FLUTTER_VERSION -- there is no shared source of
   # truth between the two files today, bump both together.
   FLUTTER_VERSION: '3.44.0'
-  # Bump alongside Apple's periodically-rising minimum Xcode/SDK requirement
-  # for new App Store/TestFlight submissions.
-  XCODE_VERSION: '15.4'
+  # 'latest-stable' rather than a pinned number: Apple periodically raises
+  # the minimum Xcode/SDK version TestFlight will even accept an upload
+  # built with (hit this directly -- 15.4/iOS 17.5 SDK got a hard 409 once
+  # Apple's minimum moved to Xcode 26/iOS 26 SDK), and there is no advance
+  # warning to bump ahead of. Floating avoids re-hitting this every time
+  # Apple moves the line; the tradeoff is a build could shift under you
+  # when GitHub updates the runner image, same risk `runs-on: macos-latest`
+  # already carries below.
+  XCODE_VERSION: 'latest-stable'
 
 jobs:
   verify:
@@ -93,7 +99,10 @@ jobs:
     # macOS runners bill roughly 10x Linux -- verify deliberately stays on
     # ubuntu-latest above since neither analyze nor test touches native iOS
     # code; only this job needs Xcode.
-    runs-on: macos-14
+    # macos-latest rather than a pinned number, so the runner image keeps
+    # pace with whatever Xcode version Apple currently demands -- see the
+    # XCODE_VERSION comment above for why pinning bit us here.
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
 
