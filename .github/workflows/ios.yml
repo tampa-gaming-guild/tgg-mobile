@@ -24,6 +24,15 @@ on:
     branches: [main]
     tags: ['v*']
   workflow_dispatch:
+    inputs:
+      lane:
+        description: >-
+          Fastlane lane to run. bootstrap_signing generates/refreshes the
+          match cert+profile (readonly:false) and is the only way to run it,
+          since it must never run on a plain push/tag trigger.
+        type: choice
+        options: [release_testflight, bootstrap_signing]
+        default: release_testflight
 
 concurrency:
   group: ios-${{ github.ref }}
@@ -116,6 +125,10 @@ jobs:
       # in the Xcode project), not CocoaPods, so `flutter pub get` alone is
       # enough to regenerate the plugin package graph.
       - name: Flutter build (no codesign)
+        # Skipped for bootstrap_signing: that lane only talks to the App
+        # Store Connect API and the match git repo to mint a cert/profile,
+        # it never touches the Flutter/Xcode build product.
+        if: github.event.inputs.lane != 'bootstrap_signing'
         run: |
           flutter build ios --release --no-codesign \
             --dart-define=TGG_ENV=${{ steps.ver.outputs.tgg_env }} \
@@ -123,7 +136,7 @@ jobs:
             --build-number=${{ github.run_number }} \
             --split-debug-info=build/ios/symbols
 
-      - name: Build and upload to TestFlight
+      - name: Run fastlane lane
         env:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
@@ -133,7 +146,9 @@ jobs:
           MATCH_GIT_BASIC_AUTHORIZATION: ${{ secrets.MATCH_GIT_BASIC_AUTHORIZATION }}
           MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
           TESTFLIGHT_GROUP: ${{ vars.TESTFLIGHT_GROUP }}
-        run: bundle exec fastlane ios release_testflight
+        # push/tag triggers have no `inputs.lane` (only workflow_dispatch
+        # sets it), hence the fallback to the normal release lane.
+        run: bundle exec fastlane ios ${{ github.event.inputs.lane || 'release_testflight' }}
         working-directory: ios
 
       - name: Upload build outputs
