@@ -89,6 +89,36 @@ class ApiClient {
     }
   }
 
+  /// Requests a password-reset email (link + 6-digit code) for the given
+  /// address. Unauthenticated -- the logged-out "forgot password" entry
+  /// point. Always reports success regardless of whether the address
+  /// matched an account (anti-enumeration, same as the website), so callers
+  /// should show a generic confirmation rather than branching on it.
+  Future<Map<String, dynamic>> forgotPassword(String email) async {
+    final response = await http.post(
+      Uri.parse('$baseUrl/auth/forgot-password.php'),
+      headers: const {'Content-Type': 'application/json'},
+      body: jsonEncode({'email': email}),
+    );
+    return {..._decode(response), 'statusCode': response.statusCode};
+  }
+
+  /// Completes a password reset with the emailed 6-digit code in one call --
+  /// no intermediate token exchange. A wrong [newPassword] (fails complexity)
+  /// does not consume the code, so callers can retry with the same code.
+  Future<Map<String, dynamic>> resetPassword({
+    required String email,
+    required String code,
+    required String newPassword,
+  }) async {
+    final response = await http.post(
+      Uri.parse('$baseUrl/auth/reset-password.php'),
+      headers: const {'Content-Type': 'application/json'},
+      body: jsonEncode({'email': email, 'code': code, 'new_password': newPassword}),
+    );
+    return {..._decode(response), 'statusCode': response.statusCode};
+  }
+
   /// Returns the decoded response body regardless of status code -- the
   /// endpoint's success/error/redirect_reason fields are the real result,
   /// not an HTTP-level exception. statusCode is included for the one case
