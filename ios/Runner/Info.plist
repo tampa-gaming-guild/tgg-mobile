@@ -38,9 +38,16 @@
 	     regardless, and if either touches CoreBluetooth/CoreLocation eagerly
 	     rather than lazily, a missing usage string crashes the app on launch
 	     on every device. UIBackgroundModes is deliberately NOT added here,
-	     since that's only needed once the native beacon port lands. -->
+	     since that's only needed once the native beacon port lands.
+	     NSLocationAlwaysAndWhenInUseUsageDescription is here for the same
+	     reason: App Store Connect's binary scan flagged its absence
+	     (ITMS-90683) since permission_handler_apple's compiled code
+	     references the "Always" authorization API even though this app
+	     doesn't call it yet -- Apple's check is static, not runtime. -->
 	<key>NSBluetoothAlwaysUsageDescription</key>
 	<string>TGG Mobile uses Bluetooth to detect the club's check-in beacon when Auto Check-In is enabled.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>TGG Mobile uses your location to detect the club's check-in beacon when Auto Check-In is enabled.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>TGG Mobile uses your location to detect the club's check-in beacon when Auto Check-In is enabled.</string>
 	<key>UIApplicationSceneManifest</key>
