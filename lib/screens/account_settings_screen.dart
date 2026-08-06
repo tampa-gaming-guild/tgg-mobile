@@ -173,23 +173,39 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
     }
 
     setState(() => _togglingAutoCheckin = true);
-    // Location is requested alongside Bluetooth, and it has to be the Precise
-    // (ACCESS_FINE_LOCATION) grant specifically -- see the AndroidManifest
-    // comment, including the note that Android's own need for Precise here is
-    // assumed rather than measured. What is measured is this: an Approximate
-    // only grant leaves Permission.location denied, so the toggle refuses
-    // instead of switching on and then never detecting anything.
-    final statuses = await [Permission.bluetoothScan, Permission.bluetoothConnect, Permission.location].request();
+    // Location is requested alongside Bluetooth. On Android it has to be the
+    // Precise (ACCESS_FINE_LOCATION) grant specifically -- see the
+    // AndroidManifest comment, including the note that Android's own need
+    // for Precise here is assumed rather than measured; an Approximate-only
+    // grant leaves Permission.location denied, so the toggle refuses instead
+    // of switching on and then never detecting anything. On iOS the request
+    // is for "Always", but iOS's staged consent flow means the very first
+    // prompt only ever offers When-In-Use -- the Always upgrade is a
+    // separate, OS-timed prompt the app cannot force to appear on demand.
+    final statuses = await [
+      Permission.bluetoothScan,
+      Permission.bluetoothConnect,
+      Platform.isIOS ? Permission.locationAlways : Permission.location,
+    ].request();
     if (!mounted) return;
     setState(() => _togglingAutoCheckin = false);
 
-    final granted = statuses.values.every((s) => s.isGranted);
+    // On Android this must be every requested permission. On iOS,
+    // When-In-Use-or-better is enough to arm monitoring: CLLocationManager's
+    // region monitoring doesn't error without "Always", it simply won't
+    // deliver region entries once the app is fully suspended -- which
+    // degrades to exactly what the foreground scanner already covers.
+    final alwaysGranted = statuses[Permission.locationAlways]?.isGranted ?? false;
+    final granted = Platform.isIOS ? (alwaysGranted || await Permission.location.isGranted) : statuses.values.every((s) => s.isGranted);
+    if (!mounted) return;
     if (!granted) {
       final permanentlyDenied = statuses.values.any((s) => s.isPermanentlyDenied);
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
         content: Text(permanentlyDenied
-            ? 'Bluetooth and Precise Location are blocked -- enable them for this app in system settings.'
-            : 'Auto check-in needs Bluetooth and Precise Location. If Location is already allowed, set it to Precise rather than Approximate.'),
+            ? 'Bluetooth and Location are blocked -- enable them for this app in system settings.'
+            : Platform.isIOS
+                ? 'Auto check-in needs Location access.'
+                : 'Auto check-in needs Bluetooth and Precise Location. If Location is already allowed, set it to Precise rather than Approximate.'),
         backgroundColor: Theme.of(context).colorScheme.error,
         action: permanentlyDenied ? SnackBarAction(label: 'Open Settings', onPressed: openAppSettings) : null,
       ));
@@ -198,6 +214,17 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
 
     await AutoCheckinPreference.setEnabled(true);
     setState(() => _autoCheckinEnabled = true);
+
+    if (Platform.isIOS && !alwaysGranted && mounted) {
+      // Non-blocking, unlike the refusal above: the feature is genuinely on
+      // and already works while the app is foregrounded. Only the
+      // fully-closed case needs the "Always" upgrade, and iOS offers that
+      // prompt on its own schedule rather than on demand.
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Auto Check-In is on. For it to check you in with the app fully closed, allow Location access "Always" when iOS asks again, or turn it on in system Settings.'),
+        duration: Duration(seconds: 8),
+      ));
+    }
 
     // Asked for separately, and never allowed to block enabling: a check-in
     // that happens while the app is closed can only announce itself as a
@@ -447,11 +474,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
             ),
           ),
         ),
-        // Beacon auto check-in is Android-only for now: the native Core
-        // Location port for iOS hasn't been built yet (see README), so the
-        // preference toggle that gates the whole feature stays hidden there
-        // rather than offering something that silently does nothing.
-        if (Platform.isAndroid) ...[
+        if (Platform.isAndroid || Platform.isIOS) ...[
           const SizedBox(height: 16),
           Card(
             child: SwitchListTile(

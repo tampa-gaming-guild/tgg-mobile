@@ -39,7 +39,7 @@ class BeaconBackground {
         debugPrint('Background beacon scan not started: $failure');
       }
     } on MissingPluginException {
-      // Not Android; nothing to arm.
+      // Neither Android nor iOS has a handler registered for this channel.
     } on PlatformException catch (e) {
       debugPrint('Background beacon scan not started: ${e.message}');
     }
@@ -49,7 +49,7 @@ class BeaconBackground {
     try {
       await _channel.invokeMethod('stopScan');
     } on MissingPluginException {
-      // Not Android; nothing was armed.
+      // Neither Android nor iOS has a handler registered for this channel.
     } on PlatformException {
       // Adapter gone or permission revoked; the scan is not running either way.
     }

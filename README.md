@@ -85,13 +85,16 @@ sign, and archive step runs on a GitHub Actions macOS runner instead; see
 [iOS builds and TestFlight](#ios-builds-and-testflight) below for the pipeline
 and how testers get a build.
 
-The BLE beacon auto check-in feature itself hasn't been ported to iOS yet —
-the toggle is hidden there (`AccountSettingsScreen`, `Platform.isAndroid`
-gate) until the native Core Location/`CLBeaconRegion` port lands. Android's
-CoreBluetooth-style background-scan approach doesn't transfer: iOS needs
-region monitoring and an "Always" location grant, and the iOS Simulator has
-no real Bluetooth radio either way, so that work will need a physical iPhone
-regardless.
+The BLE beacon auto check-in feature has a native iOS port
+(`BeaconMonitor`/`BeaconBackgroundChannel`/`BeaconBackgroundRunner`.swift)
+using Core Location/`CLBeaconRegion` region monitoring — Android's
+CoreBluetooth-style background-scan approach doesn't transfer, since iOS
+needs region monitoring and an "Always" location grant instead. The toggle
+in `AccountSettingsScreen` is live on both platforms, but the iOS side is
+implemented-but-unverified: the Simulator has no real Bluetooth radio and
+can't meaningfully simulate region monitoring either, so foreground,
+backgrounded, and fully-terminated detection all still need to be checked on
+a physical iPhone once one is available.
 
 ## Builds and releases
 
@@ -219,8 +222,11 @@ of this:
    weeks — start that lookup early if choosing this path.
 2. Register the App ID `com.tampagamingguild.tggmobile` in the Apple
    Developer portal, matching the bundle id already in `project.pbxproj` and
-   Android's `applicationId`. No extra capabilities needed yet — Background
-   Modes gets added once the native beacon port lands.
+   Android's `applicationId`. No extra capability registration is needed for
+   the beacon port's background location mode — unlike Push Notifications or
+   HealthKit, `UIBackgroundModes: [location]` is a plain `Info.plist`
+   declaration with no App ID-level capability or entitlement behind it, so
+   `release_testflight` picks it up without a `bootstrap_signing` re-run.
 3. Create the app record in App Store Connect (**My Apps → New App**) — like
    Play above, the API can't create an app's first record, only upload to an
    existing one.
@@ -304,11 +310,12 @@ its right-hand faces first.
 
 Standard `flutter create` layout (`lib/`, `android/`, `ios/`). `android/` and
 `ios/` are committed (not regenerated) since they carry the beacon-detection
-plugin's native config once that's wired up.
+feature's native code.
 
 The Android application id is `com.tampagamingguild.tggmobile`, matching the
 iOS bundle id. It is **permanent once published to Play**. Note that the
 MethodChannel names in `lib/beacon/beacon_background.dart` embed that string and
-are matched by constants in `BeaconBackgroundChannel.kt` and
-`BeaconBackgroundRunner.kt` — they are opaque names, so changing one side alone
-compiles and launches cleanly and then silently never delivers a call.
+are matched by constants in `BeaconBackgroundChannel.kt`/`BeaconBackgroundRunner.kt`
+(Android) and `BeaconBackgroundChannel.swift`/`BeaconBackgroundRunner.swift`
+(iOS) — they are opaque names, so changing one side alone compiles and
+launches cleanly and then silently never delivers a call.
