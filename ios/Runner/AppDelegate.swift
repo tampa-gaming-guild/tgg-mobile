@@ -22,7 +22,7 @@ import UIKit
     // Arm/disarm of background beacon detection on the main engine; the
     // detection itself runs in a headless engine, see BeaconBackgroundRunner.
     if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "BeaconBackgroundChannel") {
-      BeaconBackgroundChannel.register(with: registrar.messenger)
+      BeaconBackgroundChannel.register(with: registrar.messenger())
     }
   }
 }

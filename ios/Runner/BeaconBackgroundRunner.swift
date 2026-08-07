@@ -50,7 +50,7 @@ enum BeaconBackgroundRunner {
         func finish(_ reason: String) {
             guard !finished else { return }
             finished = true
-            engine?.destroy()
+            engine?.destroyContext()
             engine = nil
             if bgTask != .invalid {
                 UIApplication.shared.endBackgroundTask(bgTask)
