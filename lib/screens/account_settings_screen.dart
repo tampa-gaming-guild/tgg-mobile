@@ -158,10 +158,10 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
     setState(() => _checkinAlertsEnabled = true);
   }
 
-  /// Turning on requires the Bluetooth scan/connect permissions up front --
-  /// no point flipping the preference on if the OS won't let beacon
-  /// detection run once it exists. Turning off never needs a permission
-  /// check.
+  /// Turning on requires location (and, on Android, Bluetooth scan/connect)
+  /// permission up front -- no point flipping the preference on if the OS
+  /// won't let beacon detection run once it exists. Turning off never needs
+  /// a permission check.
   Future<void> _toggleAutoCheckin(bool enabled) async {
     if (!enabled) {
       await AutoCheckinPreference.setEnabled(false);
@@ -173,36 +173,53 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
     }
 
     setState(() => _togglingAutoCheckin = true);
-    // Location is requested alongside Bluetooth. On Android it has to be the
-    // Precise (ACCESS_FINE_LOCATION) grant specifically -- see the
-    // AndroidManifest comment, including the note that Android's own need
-    // for Precise here is assumed rather than measured; an Approximate-only
-    // grant leaves Permission.location denied, so the toggle refuses instead
-    // of switching on and then never detecting anything. On iOS the request
-    // is for "Always", but iOS's staged consent flow means the very first
-    // prompt only ever offers When-In-Use -- the Always upgrade is a
-    // separate, OS-timed prompt the app cannot force to appear on demand.
-    final statuses = await [
-      Permission.bluetoothScan,
-      Permission.bluetoothConnect,
-      Platform.isIOS ? Permission.locationAlways : Permission.location,
-    ].request();
-    if (!mounted) return;
-    setState(() => _togglingAutoCheckin = false);
+    bool granted;
+    bool permanentlyDenied;
+    var alwaysGranted = false;
+    try {
+      if (Platform.isIOS) {
+        // Must request When-In-Use before Always: permission_handler_apple's
+        // native side throws MISSING_WHENINUSE_PERMISSION synchronously if
+        // Always is requested while authorization is still notDetermined
+        // (i.e. on every fresh install), and with no try/catch around this
+        // await that used to leave the spinner stuck forever.
+        final whenInUse = await Permission.locationWhenInUse.request();
+        granted = whenInUse.isGranted;
+        permanentlyDenied = whenInUse.isPermanentlyDenied;
 
-    // On Android this must be every requested permission. On iOS,
-    // When-In-Use-or-better is enough to arm monitoring: CLLocationManager's
-    // region monitoring doesn't error without "Always", it simply won't
-    // deliver region entries once the app is fully suspended -- which
-    // degrades to exactly what the foreground scanner already covers.
-    final alwaysGranted = statuses[Permission.locationAlways]?.isGranted ?? false;
-    final granted = Platform.isIOS ? (alwaysGranted || await Permission.location.isGranted) : statuses.values.every((s) => s.isGranted);
+        if (granted) {
+          // Best-effort only: iOS shows the "Always" upgrade prompt on its
+          // own schedule and may not show it at all this session, and
+          // permission_handler has no timeout of its own for that case --
+          // bound it here so that outcome degrades to When-In-Use instead
+          // of hanging the toggle a second way.
+          try {
+            final always = await Permission.locationAlways.request().timeout(const Duration(seconds: 10));
+            alwaysGranted = always.isGranted;
+          } catch (_) {
+            alwaysGranted = false;
+          }
+        }
+      } else {
+        // On Android this has to be the Precise (ACCESS_FINE_LOCATION) grant
+        // specifically -- see the AndroidManifest comment, including the
+        // note that Android's own need for Precise here is assumed rather
+        // than measured; an Approximate-only grant leaves Permission.location
+        // denied, so the toggle refuses instead of switching on and then
+        // never detecting anything.
+        final statuses = await [Permission.bluetoothScan, Permission.bluetoothConnect, Permission.location].request();
+        granted = statuses.values.every((s) => s.isGranted);
+        permanentlyDenied = statuses.values.any((s) => s.isPermanentlyDenied);
+      }
+    } finally {
+      if (mounted) setState(() => _togglingAutoCheckin = false);
+    }
     if (!mounted) return;
+
     if (!granted) {
-      final permanentlyDenied = statuses.values.any((s) => s.isPermanentlyDenied);
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
         content: Text(permanentlyDenied
-            ? 'Bluetooth and Location are blocked -- enable them for this app in system settings.'
+            ? '${Platform.isIOS ? 'Location is' : 'Bluetooth and Location are'} blocked -- enable ${Platform.isIOS ? 'it' : 'them'} for this app in system settings.'
             : Platform.isIOS
                 ? 'Auto check-in needs Location access.'
                 : 'Auto check-in needs Bluetooth and Precise Location. If Location is already allowed, set it to Precise rather than Approximate.'),
